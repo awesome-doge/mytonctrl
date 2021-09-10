@@ -41,7 +41,7 @@ if [ "$OSTYPE" == "linux-gnu" ]; then
 	elif [ -f /etc/debian_version ]; then
 		echo "Ubuntu/Debian Linux detected."
 		apt-get update
-		apt-get install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip
+		apt-get install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip python3-setuptools
 	else
 		echo "Unknown Linux distribution."
 		echo "This OS is not supported with this script at present. Sorry."
@@ -78,10 +78,14 @@ pip3 install psutil crc16 requests
 echo -e "${COLOR}[2/6]${ENDC} Cloning github repository"
 cd $SOURCES_DIR
 rm -rf $SOURCES_DIR/ton
+rm -rf $SOURCES_DIR/pow-miner-gpu
 rm -rf $SOURCES_DIR/mytonctrl
 git clone --recursive https://github.com/newton-blockchain/ton.git
-git clone --recursive https://github.com/igroman787/mytonctrl.git
-
+git clone --recursive https://github.com/tontechio/pow-miner-gpu.git
+git clone --recursive https://github.com/akifoq/mytonctrl.git
+rm -rf $SOURCES_DIR/ton/crypto
+cp -r $SOURCES_DIR/pow-miner-gpu/crypto $SOURCES_DIR/ton/crypto
+rm -rf $SOURCES_DIR/pow-miner-gpu
 
 # Подготавливаем папки для компиляции
 echo -e "${COLOR}[3/6]${ENDC} Preparing for compilation"
@@ -98,10 +102,13 @@ else
 	export CC=$(which clang)
 	export CXX=$(which clang++)
 	export CCACHE_DISABLE=1
+	export CUDA_HOME=/usr/local/cuda
+	export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64
+	export PATH=$PATH:$CUDA_HOME/bin	
 fi
 
 # Подготовиться к компиляции
-cmake -DCMAKE_BUILD_TYPE=Release $SOURCES_DIR/ton
+cmake -DCMAKE_BUILD_TYPE=Release -DMINERCUDA=true $SOURCES_DIR/ton
 
 # Компилируем из исходников
 echo -e "${COLOR}[4/6]${ENDC} Source Compilation"
@@ -112,7 +119,7 @@ if [ ${cpuNumber} == 0 ]; then
 	cpuNumber=1
 fi
 echo "use ${cpuNumber} cpus"
-make -j ${cpuNumber} fift validator-engine lite-client pow-miner validator-engine-console generate-random-id
+make -j ${cpuNumber} lite-client pow-miner-cuda
 
 # Скачиваем конфигурационные файлы lite-client
 echo -e "${COLOR}[5/6]${ENDC} Downloading config files"

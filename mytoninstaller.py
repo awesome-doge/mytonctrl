@@ -275,7 +275,7 @@ def FirstMytoncoreSettings():
 
 	# miner
 	miner = dict()
-	miner["appPath"] = tonBinDir + "crypto/pow-miner"
+	miner["appPath"] = tonBinDir + "crypto/pow-miner-cuda"
 	mconfig["miner"] = miner
 
 	# Telemetry

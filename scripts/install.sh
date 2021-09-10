@@ -32,17 +32,16 @@ fi
 
 # Проверяю наличие компонентов TON
 echo -e "${COLOR}[2/4]${ENDC} Checking for required TON components"
-file1=$BIN_DIR/ton/crypto/fift
+file1=$BIN_DIR/ton/crypto/pow-miner-cuda
 file2=$BIN_DIR/ton/lite-client/lite-client
-file3=$BIN_DIR/ton/validator-engine-console/validator-engine-console
-if [ -f "${file1}" ] && [ -f "${file2}" ] && [ -f "${file3}" ]; then
+if [ -f "${file1}" ] && [ -f "${file2}" ]; then
 	echo "TON exist"
 	cd $SOURCES_DIR
 	rm -rf $SOURCES_DIR/mytonctrl
-	git clone --recursive https://github.com/igroman787/mytonctrl.git
+	git clone --recursive https://github.com/akifoq/mytonctrl.git
 else
 	rm -f toninstaller.sh
-	wget https://raw.githubusercontent.com/igroman787/mytonctrl/master/scripts/toninstaller.sh
+	wget https://raw.githubusercontent.com/akifoq/mytonctrl/master/scripts/toninstaller.sh
 	bash toninstaller.sh
 	rm -f toninstaller.sh
 fi
