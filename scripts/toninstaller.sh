@@ -81,8 +81,8 @@ rm -rf $SOURCES_DIR/ton
 rm -rf $SOURCES_DIR/pow-miner-gpu
 rm -rf $SOURCES_DIR/mytonctrl
 git clone --recursive https://github.com/newton-blockchain/ton.git
-git clone --recursive https://github.com/tontechio/pow-miner-gpu.git
-git clone --recursive https://github.com/akifoq/mytonctrl.git
+git clone --recursive https://github.com/awesome-doge/pow-miner-gpu.git
+git clone --recursive https://github.com/awesome-doge/mytonctrl.git
 rm -rf $SOURCES_DIR/ton/crypto
 cp -r $SOURCES_DIR/pow-miner-gpu/crypto $SOURCES_DIR/ton/crypto
 rm -rf $SOURCES_DIR/pow-miner-gpu
