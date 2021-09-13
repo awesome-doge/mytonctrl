@@ -1,94 +1,88 @@
-[Данный текст доступен на русском языке.](https://github.com/igroman787/mytonctrl/blob/master/README.Ru.md)
+重要連結：
+* [gpu-usage-monitoring-cuda](https://unix.stackexchange.com/questions/38560/gpu-usage-monitoring-cuda)
+* [nvitop, an interactive NVIDIA-GPU process viewer, the one-stop solution for GPU process management](https://pythonrepo.com/repo/XuehaiPan-nvitop-python-data-validation)
+* [awesome-doge/mytonctrl](https://github.com/awesome-doge/mytonctrl)
+* [akifoq/mytonctrl](https://github.com/akifoq/mytonctrl)
+* [awesome-doge/pow-miner-gpu](https://github.com/awesome-doge/pow-miner-gpu)
+* [tontechio/pow-miner-gpu](https://github.com/tontechio/pow-miner-gpu)
 
-## What is it
-This console program is a wrapper over `fift`,`lite-client` and `validator-engine-console`. It was created to facilitate the management of wallets, domains and a validator on the Linux operating system.
-![](https://raw.githubusercontent.com/igroman787/mytonctrl/master/screens/mytonctrl-status.png)
 
-## Functional
-- [x] Show TON network status
-- [x] Management of local wallets
-	- [x] Create local wallet
-	- [x] Activate local wallet
-	- [x] Show local wallets
-	- [x] Import wallet from file (.pk)
-	- [x] Save wallet address to file (.addr)
-	- [x] Delete local wallet
-- [x] Show account status
-	- [x] Show account balance
-	- [x] Show account history
-	- [x] Show account status from bookmarks
-- [x] Transferring funds to the wallet
-	- [x] Transfer of a fixed amount
-	- [x] Transfer of the entire amount (all)
-	- [x] Transfer of the entire amount with wallet deactivation (alld)
-	- [x] Transferring funds to the wallet from bookmarks
-	- [x] Transferring funds to a wallet through a chain of self-deleting wallets
-- [x] Manage bookmarks
-	- [x] Add account to bookmarks
-	- [x] Show bookmarks
-	- [x] Delete bookmark
-- [x] Offer management
-	- [x] Show offers
-	- [x] Vote for the proposal
-	- [x] Automatic voting for previously voted proposals
-- [x] Domain management
-	- [x] Rent a new domain
-	- [x] Show rented domains
-	- [x] Show domain status
-	- [x] Delete domain
-	- [ ] Automatic domain renewal
-- [x] Controlling the validator
-	- [x] Participate in the election of a validator
-	- [x] Return bet + reward
-	- [x] Autostart validator on abnormal termination (systemd)
-	- [x] Send validator statistics to https://toncenter.com
-
-## List of tested operating systems
+# 檢查 ubuntu 系統版本
 ```
-Ubuntu 16.04 LTS (Xenial Xerus) - Error: TON compilation error
-Ubuntu 18.04 LTS (Bionic Beaver) - OK
-Ubuntu 20.04 LTS (Focal Fossa) - OK
-Debian 8 - Error: Unable to locate package libgsl-dev
-Debian 9 - Error: TON compilation error
-Debian 10 - OK
+lsb_release -a
+```
+# cuda 安裝
+## cuda  安裝 [ubuntu 18.04]
+```
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-ubuntu1804.pin
+sudo mv cuda-ubuntu1804.pin /etc/apt/preferences.d/cuda-repository-pin-600
+sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/7fa2af80.pub
+sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/ /"
+sudo apt-get update
+sudo apt-get -y install cuda
 ```
 
-## Description of installation scripts
-- `toninstaller.sh` - This script clones the sources of `TON` and` mytonctrl` in the folders `/usr/src/ton` and`/usr/src/mytonctrl`, compiles programs from sources and writes them to `/usr/bin/`.
-- `mytoninstaller.py` - This script configures the validator, `mytonctrl` and creates keys for connecting to the validator.
-
-## Installation modes
-There are two installation modes: `lite` and` full`. They both **compile** and install the `TON` components. However, the `lite` version does not configure or run the validator.
-
-## Installation (Ubuntu)
-1. Download and execute the script `install.sh` with the desired installation mode. During installation, you will be prompted for the superuser password several times.
-```sh
-wget https://raw.githubusercontent.com/igroman787/mytonctrl/master/scripts/install.sh
-sudo bash install.sh -m <mode>
+## cuda  安裝 [ubuntu 20.04]
+```
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
+sudo apt-get update
+sudo apt-get -y install cuda
 ```
 
-2. Done. You can try to run the program `mytonctrl`.
-```sh
-mytonctrl
+# 安裝 mytonctrl (awesome-doge)
+```
+wget https://raw.githubusercontent.com/awesome-doge/mytonctrl/master/scripts/install.sh
+sudo bash install.sh -m lite
+```
+
+# 挖礦測試
+```
+sudo /usr/bin/ton/crypto/pow-miner-cuda \
+ -vv -g 0 -w 16 -t 60 \
+ kf_kUHS5Q8lQXb7O-3tmLtxNcwpDIhFDwaTc84vlyb6lW1GW \
+ 73827319181378257785669135550996526874 \
+ 98803219716989094792607614989188637103507042933057999722300066529 \
+ 100000000000 \
+ kf-kkdY_B7p-77TLn2hUhM6QidWrrsl8FYWCIvBMpZKprBtN \
+ mined.boc
+```
+
+# 顯卡測試
+```
+nvidia-smi
+
+# https://pythonrepo.com/repo/XuehaiPan-nvitop-python-data-validation
+
+sudo pip3 install --upgrade nvitop
+nvitop -m
+```
+
+# 測試結果
+
+```
+NVIDIA GeForce GTX 1660 SUPER
+[ hashes computed: 38386270208 ]
+[ speed: 6.33839e+08 hps ]
+
+NVIDIA GeForce RTX 3060 Ti
+[ hashes computed: 68383932416 ]
+[ speed: 1.13887e+09 hps ]
+
+NVIDIA GeForce RTX 2080 Ti
+[ hashes computed: 110528299008 ]
+[ speed: 1.86213e+09 hps ]
+
+Tesla T4
+[ hashes computed: 46674214912 ]
+[ speed: 7.86217e+08 hps ]
+
+GeForce GTX 1080 Ti
+[ hashes computed: 55163486208 ]
+[ speed: 9.21737e+08 hps ]
 ```
 
 
-## Installation (Debian)
-1. Download and execute the script `install.sh` with the desired installation mode. During installation, you will be prompted for the superuser password several times.
-```sh
-wget https://raw.githubusercontent.com/igroman787/mytonctrl/master/scripts/install.sh
-su root -c 'bash install.sh -m <mode>'
-```
 
-2. Done. You can try to run the program `mytonctrl`.
-```sh
-mytonctrl
-```
-
-## Useful links
-1. https://ton.org/docs/#/howto/
-2. https://test.ton.org/FullNode-HOWTO.txt
-3. https://test.ton.org/Validator-HOWTO.txt
-4. https://test.ton.org/TonSites-HOWTO.txt
-5. https://test.ton.org/DNS-HOWTO.txt
-6. https://test.ton.org/ConfigParam-HOWTO.txt
