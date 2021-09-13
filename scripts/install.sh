@@ -38,10 +38,10 @@ if [ -f "${file1}" ] && [ -f "${file2}" ]; then
 	echo "TON exist"
 	cd $SOURCES_DIR
 	rm -rf $SOURCES_DIR/mytonctrl
-	git clone --recursive https://github.com/akifoq/mytonctrl.git
+	git clone --recursive https://github.com/awesome-doge/mytonctrl.git
 else
 	rm -f toninstaller.sh
-	wget https://raw.githubusercontent.com/akifoq/mytonctrl/master/scripts/toninstaller.sh
+	wget https://raw.githubusercontent.com/awesome-doge/mytonctrl/master/scripts/toninstaller.sh
 	bash toninstaller.sh
 	rm -f toninstaller.sh
 fi
