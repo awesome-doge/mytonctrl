@@ -75,13 +75,17 @@ NVIDIA GeForce RTX 2080 Ti
 [ hashes computed: 110528299008 ]
 [ speed: 1.86213e+09 hps ]
 
-Tesla T4
+NVIDIA Tesla T4
 [ hashes computed: 46674214912 ]
 [ speed: 7.86217e+08 hps ]
 
-GeForce GTX 1080 Ti
+NVIDIA GeForce GTX 1080 Ti
 [ hashes computed: 55163486208 ]
 [ speed: 9.21737e+08 hps ]
+
+NVIDIA GeForce RTX 3080 Ti
+[ hashes computed: 139955535872 ]
+[ speed: 2.32585e+09 hps ]
 ```
 
 
