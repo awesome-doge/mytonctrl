@@ -19,7 +19,7 @@ rm -rf /usr/src/pow-miner-gpu/
 # 下載 pow-miner-gpu
 echo -e "${COLOR}[3]${ENDC} 下載 pow-miner-gpu"
 cd /usr/src
-git clone --recursive https://github.com/tontechio/pow-miner-gpu.git
+git clone --recursive https://github.com/awesome-doge/pow-miner-gpu.git
 cd /usr/src/pow-miner-gpu
 git checkout main
 cd /usr/src/
