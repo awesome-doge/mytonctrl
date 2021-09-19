@@ -1,0 +1,47 @@
+# This is a basic workflow to help you get started with Actions
+
+name: build opencl for ubuntu 18.04
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events but only for the $default-branch branch
+  push:
+    branches: [ $default-branch ]
+  pull_request:
+    branches: [ $default-branch ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-18.04
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+
+      # Runs a single command using the runners shell
+      - name: 安裝 opencl 相關套件
+        run: |
+            echo -e "${COLOR}[1]${ENDC} 安裝 依賴套件"
+            apt install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip
+            pip3 install psutil crc16 requests
+      # 安裝 opencl  相關套件
+      - name: 安裝opencl 相關套件
+        run: |
+            apt-get install -y opencl-headers ocl-icd-libopencl1 ocl-icd-opencl-dev
+      - name: 初始化編譯參數
+        run: |
+            export CCACHE_DISABLE=1
+            cmake -DCMAKE_BUILD_TYPE=Release 
+            -DMINEROPENCL=true
+      - name: 編譯
+        run: |
+            memory=$(cat /proc/meminfo | grep MemAvailable | awk '{print $2}')
+            let "cpuNumber = memory / 2100000"
+            make -j ${cpuNumber} pow-miner-opencl lite-client fift
