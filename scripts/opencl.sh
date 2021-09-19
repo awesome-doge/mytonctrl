@@ -38,5 +38,5 @@ memory=$(cat /proc/meminfo | grep MemAvailable | awk '{print $2}')
 let "cpuNumber = memory / 2100000"
 # 編譯
 echo -e "${COLOR}[6]${ENDC} 編譯pow-miner-opencl lite-client"
-make -j ${cpuNumber} pow-miner-opencl lite-client
+make -j ${cpuNumber} pow-miner-opencl lite-client fift
 cd ~
