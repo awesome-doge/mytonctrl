@@ -32,6 +32,11 @@ sudo apt-get update
 sudo apt-get -y install cuda
 ```
 
+## opencl
+```
+
+```
+
 # 安裝 mytonctrl (awesome-doge)
 ```
 wget https://raw.githubusercontent.com/awesome-doge/mytonctrl/master/scripts/install.sh
@@ -41,7 +46,7 @@ sudo bash install.sh -m lite
 # 挖礦測試
 ```
 sudo /usr/bin/ton/crypto/pow-miner-cuda \
- -vv -g 0 -w 16 -t 60 \
+ -vv -g0 -w128 -t60 \
  kf_kUHS5Q8lQXb7O-3tmLtxNcwpDIhFDwaTc84vlyb6lW1GW \
  73827319181378257785669135550996526874 \
  98803219716989094792607614989188637103507042933057999722300066529 \
@@ -51,13 +56,20 @@ sudo /usr/bin/ton/crypto/pow-miner-cuda \
 ```
 
 # 顯卡測試
+
+> * [nvitop](https://pythonrepo.com/repo/XuehaiPan-nvitop-python-data-validation)
 ```
 nvidia-smi
 
-# https://pythonrepo.com/repo/XuehaiPan-nvitop-python-data-validation
-
 sudo pip3 install --upgrade nvitop
 nvitop -m
+```
+
+# screen
+```
+screen -dmS python3 /root/ton-miner-cuda/ton_miner_groomed/miner.py --config /root/ton-miner-cuda/config/po/cuda7.json
+
+sudo killall screen
 ```
 
 # 測試結果
@@ -86,6 +98,26 @@ NVIDIA GeForce GTX 1080 Ti
 NVIDIA GeForce RTX 3080 Ti
 [ hashes computed: 139955535872 ]
 [ speed: 2.32585e+09 hps ]
+
+NVIDIA GeForce RTX 3090
+[ hashes computed: 100025761792 ]
+[ speed: 2.38598e+09 hps ]
+
+Tesla V100-SXM2-16GB
+[ hashes computed: 111031615488 ]
+[ speed: 1.84561e+09 hps ]
+
+[-w32]
+[ hashes computed: 111937585152 ]
+[ speed: 1.85526e+09 hps ]
+
+[-w64]
+[ hashes computed: 111300050944 ]
+[ speed: 1.83681e+09 hps ]
+
+[-w128]
+[ hashes computed: 110394081280 ]
+[ speed: 1.80021e+09 hps ]
 ```
 
 
