@@ -9,8 +9,8 @@ COLOR='\033[92m'
 ENDC='\033[0m'
 # 安裝 依賴套件
 echo -e "${COLOR}[1]${ENDC} 安裝 依賴套件"
-apt install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip
-pip3 install psutil crc16 requests
+apt install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip screen
+pip3 install psutil crc16 requests nvitop
 # 移除舊的
 echo -e "${COLOR}[2]${ENDC} 移除舊的"
 rm -rf /usr/bin/ton/
