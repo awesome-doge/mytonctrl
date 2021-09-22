@@ -22,15 +22,15 @@ jobs:
       - name: 
         run: |
             echo -e "${COLOR}[3]${ENDC} 下載 pow-miner-gpu"
-            sudo cd /usr/src
+            cd /usr/src
             sudo git clone --recursive https://github.com/awesome-doge/pow-miner-gpu.git
-            sudo cd /usr/src/pow-miner-gpu
+            cd /usr/src/pow-miner-gpu
             sudo git checkout main
-            sudo cd /usr/src/
+            cd /usr/src/
             sudo mv pow-miner-gpu ton
             echo -e "${COLOR}[4]${ENDC} 初始化編譯環境"
             sudo mkdir /usr/bin/ton
-            sudo cd /usr/bin/ton
+            cd /usr/bin/ton
             export CCACHE_DISABLE=1
             export CUDA_HOME=/usr/local/cuda
             export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64
@@ -42,7 +42,7 @@ jobs:
             # 編譯
             echo -e "${COLOR}[5]${ENDC} 編譯pow-miner-cuda lite-client"
             sudo make -j ${cpuNumber} pow-miner-cuda lite-client fift
-            sudo cd ~
+            cd ~
             sudo mkdir build
             sudo zip -r bin-ton-crypto.zip /usr/bin/ton/crypto
             sudo cp bin-ton-crypto.zip build
