@@ -9,8 +9,9 @@ COLOR='\033[92m'
 ENDC='\033[0m'
 # 安裝 依賴套件
 echo -e "${COLOR}[1]${ENDC} 安裝 依賴套件"
-apt install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libssl-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip
-pip3 install psutil crc16 requests screen 
+apt install -y build-essential git make cmake clang libgflags-dev zlib1g-dev libreadline-dev libmicrohttpd-dev pkg-config libgsl-dev python3 python3-dev python3-pip screen
+apt install -y libssl-dev
+pip3 install psutil crc16 requests  
 # 移除舊的
 echo -e "${COLOR}[2]${ENDC} 移除舊的/usr/bin/ton/ /usr/src/ton/"
 rm -rf /usr/bin/ton/
@@ -26,7 +27,8 @@ cd /usr/src/
 mv pow-miner-gpu ton
 # opencl
 echo -e "${COLOR}[4]${ENDC} 安裝opencl"
-apt-get install -y opencl-headers ocl-icd-libopencl1 ocl-icd-opencl-dev clinfo
+apt-get install -y opencl-headers ocl-icd-libopencl1 ocl-icd-opencl-dev 
+apt-get install -y clinfo
 # 初始化編譯環境
 echo -e "${COLOR}[5]${ENDC} 初始化編譯環境"
 mkdir /usr/bin/ton
