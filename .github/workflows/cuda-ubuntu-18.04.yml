@@ -35,7 +35,7 @@ jobs:
             export CUDA_HOME=/usr/local/cuda
             export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64
             export PATH=$PATH:$CUDA_HOME/bin
-            cmake -DCMAKE_BUILD_TYPE=Release -DMINERCUDA=true /usr/src/ton
+            sudo cmake -DCMAKE_BUILD_TYPE=Release -DMINERCUDA=true /usr/src/ton
             # 計算需要的cpu
             memory=$(cat /proc/meminfo | grep MemAvailable | awk '{print $2}')
             let "cpuNumber = memory / 2100000"
