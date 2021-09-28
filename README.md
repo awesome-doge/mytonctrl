@@ -32,10 +32,6 @@ sudo apt-get update
 sudo apt-get -y install cuda
 ```
 
-## opencl
-```
-
-```
 
 # 安裝 mytonctrl (awesome-doge)
 ```
@@ -65,12 +61,6 @@ sudo pip3 install --upgrade nvitop
 nvitop -m
 ```
 
-# screen
-```
-screen -dmS python3 /root/ton-miner-cuda/ton_miner_groomed/miner.py --config /root/ton-miner-cuda/config/po/cuda7.json
-
-sudo killall screen
-```
 
 # 測試結果
 
@@ -98,6 +88,10 @@ NVIDIA GeForce GTX 1080 Ti
 NVIDIA GeForce RTX 3080 Ti
 [ hashes computed: 139955535872 ]
 [ speed: 2.32585e+09 hps ]
+
+NVIDIA GeForce RTX 3080
+[ hashes computed: 100025761792 ]
+[ speed: 2.0182e+09 hps ]
 
 NVIDIA GeForce RTX 3090
 [ hashes computed: 100025761792 ]
