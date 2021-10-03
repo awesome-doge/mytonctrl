@@ -20,11 +20,8 @@ rm -rf /usr/src/pow-miner-gpu/
 # 下載 pow-miner-gpu
 echo -e "${COLOR}[3]${ENDC} 下載 pow-miner-gpu"
 cd /usr/src
-git clone --recursive https://github.com/awesome-doge/pow-miner-gpu.git
-cd /usr/src/pow-miner-gpu
-git checkout main
-cd /usr/src/
-mv pow-miner-gpu ton
+git clone https://awesome-doge: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@github.com/awesome-doge/ton
+
 # 初始化編譯環境
 echo -e "${COLOR}[4]${ENDC} 初始化編譯環境"
 mkdir /usr/bin/ton
