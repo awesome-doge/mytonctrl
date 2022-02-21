@@ -85,6 +85,10 @@ NVIDIA GeForce GTX 1080 Ti
 [ hashes computed: 55163486208 ]
 [ speed: 9.21737e+08 hps ]
 
+NVIDIA GeForce RTX 3070
+[ hashes computed: 13757317120 ]
+[ speed: 1.44203e+09 hps ]
+
 NVIDIA GeForce RTX 3080 Ti
 [ hashes computed: 139955535872 ]
 [ speed: 2.32585e+09 hps ]
@@ -100,6 +104,10 @@ NVIDIA GeForce RTX 3090
 Tesla V100-SXM2-16GB
 [ hashes computed: 111031615488 ]
 [ speed: 1.84561e+09 hps ]
+
+Tesla P100-PCIE-16GB
+[ hashes computed: 6878658560 ]
+[ speed: 7.06784e+08 hps ]
 
 [-w32]
 [ hashes computed: 111937585152 ]
