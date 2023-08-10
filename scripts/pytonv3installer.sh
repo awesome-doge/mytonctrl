@@ -1,48 +1,58 @@
 #!/bin/bash
 set -e
 
-# Проверить sudo
+# Ensure the script is run as root
 if [ "$(id -u)" != "0" ]; then
-	echo "Please run script as root"
-	exit 1
+    echo "Error: Please run this script as root."
+    exit 1
 fi
 
-# Get arguments
-while getopts u: flag
-do
-	case "${flag}" in
-		u) user=${OPTARG};;
-	esac
+# Define colors for output
+COLOR_GREEN='\033[92m'
+COLOR_RESET='\033[0m'
+
+# Parse script arguments
+while getopts u: flag; do
+    case "${flag}" in
+        u) user=${OPTARG};;
+    esac
 done
 
-# Цвета
-COLOR='\033[92m'
-ENDC='\033[0m'
+# If user is not specified, exit
+if [ -z "${user}" ]; then
+    echo "Error: User not specified. Use the -u flag."
+    exit 1
+fi
 
-# Установка компонентов python3
-echo -e "${COLOR}[1/4]${ENDC} Installing required packages"
+# Install required Python packages
+echo -e "${COLOR_GREEN}[1/4]${COLOR_RESET} Installing required packages"
 pip3 install pipenv==2022.3.28
 
-# Клонирование репозиториев с github.com
-echo -e "${COLOR}[2/4]${ENDC} Cloning github repository"
-cd /usr/src
-rm -rf pytonv3
-#git clone https://github.com/EmelyanenkoK/pytonv3
-git clone https://github.com/igroman787/pytonv3
+# Clone the specified repository
+SRC_DIR="/usr/src"
+REPO_DIR="pytonv3"
+echo -e "${COLOR_GREEN}[2/4]${COLOR_RESET} Cloning GitHub repository"
+cd ${SRC_DIR}
+[ -d "${REPO_DIR}" ] && rm -rf ${REPO_DIR}
+git clone https://github.com/igroman787/${REPO_DIR}
 
-# Установка модуля
-cd /usr/src/pytonv3
+# Install the module
+echo "Installing ${REPO_DIR} module"
+cd ${SRC_DIR}/${REPO_DIR}
 python3 setup.py install
 
-# Скомпилировать недостающий бинарник
-cd /usr/bin/ton && make tonlibjson
+# Compile any missing binaries
+TON_DIR="/usr/bin/ton"
+echo "Compiling missing binaries"
+cd ${TON_DIR}
+make tonlibjson
 
-# Прописать автозагрузку
-echo -e "${COLOR}[3/4]${ENDC} Add to startup"
-cmd="from sys import path; path.append('/usr/src/mytonctrl/'); from mypylib.mypylib import *; Add2Systemd(name='pytonv3', user='${user}', workdir='/usr/src/pytonv3', start='/usr/bin/python3 -m pyTON --liteserverconfig /usr/bin/ton/local.config.json --libtonlibjson /usr/bin/ton/tonlib/libtonlibjson.so')"
+# Add service to startup
+echo -e "${COLOR_GREEN}[3/4]${COLOR_RESET} Adding to startup"
+cmd="from sys import path; path.append('/usr/src/mytonctrl/'); from mypylib.mypylib import *; Add2Systemd(name='${REPO_DIR}', user='${user}', workdir='${SRC_DIR}/${REPO_DIR}', start='/usr/bin/python3 -m pyTON --liteserverconfig ${TON_DIR}/local.config.json --libtonlibjson ${TON_DIR}/tonlib/libtonlibjson.so')"
 python3 -c "${cmd}"
-systemctl restart pytonv3
+systemctl restart ${REPO_DIR}
 
-# Конец
-echo -e "${COLOR}[4/4]${ENDC} pyTONv3 installation complete"
+# Completion message
+echo -e "${COLOR_GREEN}[4/4]${COLOR_RESET} ${REPO_DIR} installation complete"
 exit 0
