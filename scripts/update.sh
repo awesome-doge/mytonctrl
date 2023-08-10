@@ -1,46 +1,53 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Проверить sudo
-if [ "$(id -u)" != "0" ]; then
-	echo "Please run script as root"
-	exit 1
+# Check for root permissions
+if [[ "$(id -u)" != "0" ]]; then
+    echo "Error: This script must be run as root."
+    exit 1
 fi
 
-# Set default arguments
-author="ton-blockchain"
-repo="mytonctrl"
-branch="master"
-srcdir="/usr/src/"
-bindir="/usr/bin/"
+# Default parameters
+AUTHOR="ton-blockchain"
+REPO="mytonctrl"
+BRANCH="master"
+SRC_DIR="/usr/src/"
+BIN_DIR="/usr/bin/"
 
-# Get arguments
-while getopts a:r:b: flag
-do
-	case "${flag}" in
-		a) author=${OPTARG};;
-		r) repo=${OPTARG};;
-		b) branch=${OPTARG};;
-	esac
+# ANSI color codes
+GREEN='\033[92m'
+RESET='\033[0m'
+
+# Parse arguments
+while getopts a:r:b: option; do
+    case "${option}" in
+        a) AUTHOR=${OPTARG} ;;
+        r) REPO=${OPTARG} ;;
+        b) BRANCH=${OPTARG} ;;
+    esac
 done
 
-# Цвета
-COLOR='\033[92m'
-ENDC='\033[0m'
-
-# Установка компонентов python3
+# Install required Python packages
 pip3 install fastcrc
 
-# Go to work dir
-cd ${srcdir}
-rm -rf ${srcdir}/${repo}
+# Navigate to the working directory
+pushd ${SRC_DIR}
+rm -rf ${SRC_DIR}/${REPO}
 
-# Update code
-echo "https://github.com/${author}/${repo}.git -> ${branch}"
-git clone --recursive https://github.com/${author}/${repo}.git
-cd ${repo} && git checkout ${branch} && git submodule update --init --recursive
+# Clone the repository and checkout the specific branch
+echo "Fetching: https://github.com/${AUTHOR}/${REPO}.git (Branch: ${BRANCH})"
+git clone --recursive https://github.com/${AUTHOR}/${REPO}.git
+pushd ${REPO}
+git checkout ${BRANCH}
+git submodule update --init --recursive
+
+# Restart the service
 systemctl restart mytoncore
 
-# Конец
-echo -e "${COLOR}[1/1]${ENDC} MyTonCtrl components update completed"
+# Navigate back to the original directory
+popd
+popd
+
+# Completion message
+echo -e "${GREEN}[1/1]${RESET} MyTonCtrl components update completed"
 exit 0
