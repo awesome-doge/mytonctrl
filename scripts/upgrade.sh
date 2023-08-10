@@ -1,71 +1,53 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Проверить sudo
-if [ "$(id -u)" != "0" ]; then
-	echo "Please run script as root"
-	exit 1
+# Check for root permissions
+if [[ "$(id -u)" != "0" ]]; then
+    echo "Error: This script must be run as root."
+    exit 1
 fi
 
-# Set default arguments
-author="ton-blockchain"
-repo="ton"
-branch="master"
-srcdir="/usr/src/"
-bindir="/usr/bin/"
+# Default parameters
+AUTHOR="ton-blockchain"
+REPO="mytonctrl"
+BRANCH="master"
+SRC_DIR="/usr/src/"
+BIN_DIR="/usr/bin/"
 
-# Get arguments
-while getopts a:r:b: flag
-do
-	case "${flag}" in
-		a) author=${OPTARG};;
-		r) repo=${OPTARG};;
-		b) branch=${OPTARG};;
-	esac
+# ANSI color codes
+GREEN='\033[92m'
+RESET='\033[0m'
+
+# Parse arguments
+while getopts a:r:b: option; do
+    case "${option}" in
+        a) AUTHOR=${OPTARG} ;;
+        r) REPO=${OPTARG} ;;
+        b) BRANCH=${OPTARG} ;;
+    esac
 done
 
-# Цвета
-COLOR='\033[92m'
-ENDC='\033[0m'
+# Install required Python packages
+pip3 install fastcrc
 
-# Установить дополнительные зависимости
-apt-get install -y libsecp256k1-dev libsodium-dev ninja-build
+# Navigate to the working directory
+pushd ${SRC_DIR}
+rm -rf ${SRC_DIR}/${REPO}
 
-# bugfix if the files are in the wrong place
-wget "https://ton-blockchain.github.io/global.config.json" -O global.config.json
-if [ -f "/var/ton-work/keys/liteserver.pub" ]; then
-    echo "Ok"
-else
-	echo "bugfix"
-	mkdir /var/ton-work/keys
-    cp /usr/bin/ton/validator-engine-console/client /var/ton-work/keys/client
-    cp /usr/bin/ton/validator-engine-console/client.pub /var/ton-work/keys/client.pub
-    cp /usr/bin/ton/validator-engine-console/server.pub /var/ton-work/keys/server.pub
-    cp /usr/bin/ton/validator-engine-console/liteserver.pub /var/ton-work/keys/liteserver.pub
-fi
+# Clone the repository and checkout the specific branch
+echo "Fetching: https://github.com/${AUTHOR}/${REPO}.git (Branch: ${BRANCH})"
+git clone --recursive https://github.com/${AUTHOR}/${REPO}.git
+pushd ${REPO}
+git checkout ${BRANCH}
+git submodule update --init --recursive
 
-# Go to work dir
-cd ${srcdir}
-rm -rf ${srcdir}/${repo}
+# Restart the service
+systemctl restart mytoncore
 
-# Update code
-echo "https://github.com/${author}/${repo}.git -> ${branch}"
-git clone --recursive https://github.com/${author}/${repo}.git
-cd ${repo} && git checkout ${branch} && git submodule update --init --recursive
-export CC=/usr/bin/clang
-export CXX=/usr/bin/clang++
-export CCACHE_DISABLE=1
+# Navigate back to the original directory
+popd
+popd
 
-# Update binary
-cd ${bindir}/${repo}
-ls --hide=global.config.json | xargs -d '\n' rm -rf
-rm -rf .ninja_*
-memory=$(cat /proc/meminfo | grep MemAvailable | awk '{print $2}')
-let "cpuNumber = memory / 2100000" || cpuNumber=1
-cmake -DCMAKE_BUILD_TYPE=Release ${srcdir}/${repo} -GNinja
-ninja -j ${cpuNumber} fift validator-engine lite-client pow-miner validator-engine-console generate-random-id dht-server func tonlibjson rldp-http-proxy
-systemctl restart validator
-
-# Конец
-echo -e "${COLOR}[1/1]${ENDC} TON components update completed"
+# Completion message
+echo -e "${GREEN}[1/1]${RESET} MyTonCtrl components update completed"
 exit 0
