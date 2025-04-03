@@ -235,6 +235,15 @@ class ControllerModule(MtcModule):
         t = self.do_calculate_loan_amount_test()
         print(t)
 
+    def recover_stake(self, args):
+        try:
+            controller_addr = args[0]
+        except:
+            color_print("{red}Bad args. Usage:{endc} recover_stake <controller-addr>")
+            return
+        self.ton.ControllerRecoverStake(controller_addr)
+        color_print("recover stake - {green}OK{endc}")
+
     @classmethod
     def check_enable(cls, ton: "MyTonCore"):
         from mytoninstaller.mytoninstaller import InstallerCtrl
@@ -255,3 +264,4 @@ class ControllerModule(MtcModule):
         add_command(self.local, console, "add_controller", self.add_controller)
         add_command(self.local, console, "check_liquid_pool", self.check_liquid_pool)
         add_command(self.local, console, "test_calculate_loan_amount", self.calculate_loan_amount_test)
+        add_command(self.local, console, "recover_stake", self.recover_stake)
