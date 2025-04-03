@@ -194,6 +194,15 @@ class ControllerModule(MtcModule):
         t = self.do_calculate_loan_amount_test()
         print(t)
 
+    def recover_stake(self, args):
+        try:
+            controller_addr = args[0]
+        except:
+            color_print("{red}Bad args. Usage:{endc} recover_stake <controller-addr>")
+            return
+        self.ton.ControllerRecoverStake(controller_addr)
+        color_print("recover stake - {green}OK{endc}")
+
     def add_console_commands(self, console):
         add_command(self.local, console, "create_controllers", self.create_controllers)
         add_command(self.local, console, "update_controllers", self.create_controllers)
@@ -207,3 +216,4 @@ class ControllerModule(MtcModule):
         add_command(self.local, console, "stop_and_withdraw_controller", self.stop_and_withdraw_controller)
         add_command(self.local, console, "add_controller", self.add_controller)
         add_command(self.local, console, "test_calculate_loan_amount", self.calculate_loan_amount_test)
+        add_command(self.local, console, "recover_stake", self.recover_stake)
