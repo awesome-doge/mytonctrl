@@ -185,6 +185,10 @@ class ControllerModule(MtcModule):
         t = self.do_calculate_loan_amount_test()
         print(t)
 
+    def recover_stake(self, controller_addr: TonAddress) -> None:
+        self.ton.ControllerRecoverStake(controller_addr)
+        color_print("recover stake - {green}OK{endc}")
+
     def add_console_commands(self, console):
         console.add_command("create_controllers", self.create_controllers)
         console.add_command("update_controllers", self.create_controllers)
@@ -198,3 +202,4 @@ class ControllerModule(MtcModule):
         console.add_command("stop_and_withdraw_controller", self.stop_and_withdraw_controller)
         console.add_command("add_controller", self.add_controller)
         console.add_command("test_calculate_loan_amount", self.calculate_loan_amount_test)
+        console.add_command("recover_stake", self.recover_stake)
