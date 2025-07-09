@@ -189,6 +189,10 @@ class WalletModule(MtcModule):
             # Clear cache and activate first proxy wallet
             self.local.buffer.pop("account" + str(wallet1.addrB64), None)
             self.local.buffer.pop("account" + str(wallet1.addrB64_init), None)
+            # Force clear all related cache entries
+            for key in list(self.local.buffer.keys()):
+                if str(wallet1.addrB64) in key or str(wallet1.addrB64_init) in key:
+                    self.local.buffer.pop(key, None)
             self.ton.ActivateWallet(wallet1)
             
             # Transfer to second proxy wallet
@@ -197,6 +201,10 @@ class WalletModule(MtcModule):
             # Clear cache and activate second proxy wallet
             self.local.buffer.pop("account" + str(wallet2.addrB64), None)
             self.local.buffer.pop("account" + str(wallet2.addrB64_init), None)
+            # Force clear all related cache entries
+            for key in list(self.local.buffer.keys()):
+                if str(wallet2.addrB64) in key or str(wallet2.addrB64_init) in key:
+                    self.local.buffer.pop(key, None)
             self.ton.ActivateWallet(wallet2)
             
             # Final transfer to destination
