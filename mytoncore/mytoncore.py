@@ -182,8 +182,17 @@ class MyTonCore():
 		return seqno
 	#end define
 
-	def GetAccount(self, inputAddr):
+	def GetAccount(self, inputAddr, no_cache=False):
 		#self.local.add_log("start GetAccount function", "debug")
+		# Get buffer
+		if not no_cache:
+			bname = "account" + str(inputAddr)
+			buff = self.GetFunctionBuffer(bname, timeout=3)
+			if buff:
+				return buff
+		#end if
+		account = Account()
+		account.addrB64 = inputAddr
 		workchain, addr = self.ParseInputAddr(inputAddr)
 		account = Account(workchain, addr)
 		cmd = "getaccount {inputAddr}".format(inputAddr=inputAddr)
@@ -799,10 +808,14 @@ class MyTonCore():
 			# Parse
 			status.is_working = True
 			result = self.validatorConsole.Run("getstats")
-			status.unixtime = int(parse(result, "unixtime", '\n'))
-			status.masterchainblocktime = int(parse(result, "masterchainblocktime", '\n'))
-			status.stateserializermasterchainseqno = int(parse(result, "stateserializermasterchainseqno", '\n'))
-			status.shardclientmasterchainseqno = int(parse(result, "shardclientmasterchainseqno", '\n'))
+			unixtime = parse(result, "unixtime", '\n')
+			status.unixtime = int(unixtime) if unixtime else 0
+			masterchainblocktime = parse(result, "masterchainblocktime", '\n')
+			status.masterchainblocktime = int(masterchainblocktime) if masterchainblocktime else 0
+			stateserializermasterchainseqno = parse(result, "stateserializermasterchainseqno", '\n')
+			status.stateserializermasterchainseqno = int(stateserializermasterchainseqno) if stateserializermasterchainseqno else 0
+			shardclientmasterchainseqno = parse(result, "shardclientmasterchainseqno", '\n')
+			status.shardclientmasterchainseqno = int(shardclientmasterchainseqno) if shardclientmasterchainseqno else 0
 			buff = parse(result, "masterchainblock", '\n')
 			status.masterchainblock = self.GVS_GetItemFromBuff(buff)
 			buff = parse(result, "gcmasterchainblock", '\n')
@@ -817,7 +830,8 @@ class MyTonCore():
 			status.masterchain_out_of_ser = status.masterchainblock - status.stateserializermasterchainseqno
 			status.out_of_sync = status.masterchain_out_of_sync if status.masterchain_out_of_sync > status.shardchain_out_of_sync else status.shardchain_out_of_sync
 			status.out_of_ser = status.masterchain_out_of_ser
-			status.last_deleted_mc_state = int(parse(result, "last_deleted_mc_state", '\n'))
+			last_deleted_mc_state = parse(result, "last_deleted_mc_state", '\n')
+			status.last_deleted_mc_state = int(last_deleted_mc_state) if last_deleted_mc_state else 0
 			status.stateserializerenabled = parse(result, "stateserializerenabled", '\n') == "true"
 			self.local.try_function(self.parse_stats_from_vc, args=[result, status])
 			if 'active_validator_groups' in status:
@@ -842,14 +856,19 @@ class MyTonCore():
 	#end define
 
 	def GVS_GetItemFromBuff(self, buff):
-		buffList = buff.split(':')
-		buff2 = buffList[0]
-		buff2 = buff2.replace(' ', '')
-		buff2 = buff2.replace('(', '')
-		buff2 = buff2.replace(')', '')
-		buffList2 = buff2.split(',')
-		item = buffList2[2]
-		item = int(item)
+		if not buff:
+			return 0
+		try:
+			buffList = buff.split(':')
+			buff2 = buffList[0]
+			buff2 = buff2.replace(' ', '')
+			buff2 = buff2.replace('(', '')
+			buff2 = buff2.replace(')', '')
+			buffList2 = buff2.split(',')
+			item = buffList2[2]
+			item = int(item)
+		except (IndexError, ValueError):
+			item = 0
 		return item
 	#end define
 
@@ -1716,7 +1735,7 @@ class MyTonCore():
 
 	def ActivateWallet(self, wallet):
 		self.local.add_log("start ActivateWallet function", "debug")
-		account = self.GetAccount(wallet.addrB64)
+		account = self.GetAccount(wallet.addrB64, no_cache=True)
 		if account.status == "empty":
 			raise Exception("ActivateWallet error: account status is empty")
 		elif account.status == "active":
