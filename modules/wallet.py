@@ -183,8 +183,12 @@ class WalletModule(MtcModule):
             wallet1 = self.ton.CreateWallet(wallet1_name, 0)
             wallet2 = self.ton.CreateWallet(wallet2_name, 0)
             
-            # Transfer to first proxy wallet
+            # Transfer to first proxy wallet using non-bounceable address
             self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins)
+            
+            # Wait a bit for the transaction to be processed
+            import time
+            time.sleep(2)
             
             # Clear cache and activate first proxy wallet
             self.local.buffer.pop("account" + str(wallet1.addrB64), None)
@@ -201,7 +205,7 @@ class WalletModule(MtcModule):
                 account1 = self.ton.GetAccount(wallet1.addrB64, no_cache=True)
                 self.local.add_log(f"proxy_wallet1 balance before transfer: {account1.balance}", "debug")
                 
-                self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
+                self.ton.MoveCoins(wallet1, wallet2.addrB64, "alld")
             except Exception as e:
                 self.local.add_log(f"Failed to transfer from proxy_wallet1 to proxy_wallet2: {e}", "error")
                 raise
