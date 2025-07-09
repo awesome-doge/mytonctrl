@@ -168,19 +168,57 @@ class WalletModule(MtcModule):
 
     def do_move_coins_through_proxy(self, wallet, dest, coins):
         self.local.add_log("start MoveCoinsThroughProxy function", "debug")
-        wallet1 = self.ton.CreateWallet("proxy_wallet1", 0)
-        wallet2 = self.ton.CreateWallet("proxy_wallet2", 0)
-        self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins)
-        self.local.buffer.pop("account" + str(wallet1.addrB64), None)
-        self.local.buffer.pop("account" + str(wallet1.addrB64_init), None)
-        self.ton.ActivateWallet(wallet1)
-        self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
-        self.local.buffer.pop("account" + str(wallet2.addrB64), None)
-        self.local.buffer.pop("account" + str(wallet2.addrB64_init), None)
-        self.ton.ActivateWallet(wallet2)
-        self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
-        wallet1.Delete()
-        wallet2.Delete()
+        wallet1, wallet2 = None, None
+        try:
+            # Delete wallets from previous runs to ensure a clean state
+            try:
+                old_wallet1 = self.ton.GetLocalWallet("proxy_wallet1", "v1")
+                if old_wallet1: old_wallet1.Delete()
+            except Exception: pass
+            try:
+                old_wallet2 = self.ton.GetLocalWallet("proxy_wallet2", "v1")
+                if old_wallet2: old_wallet2.Delete()
+            except Exception: pass
+
+            wallet1 = self.ton.CreateWallet("proxy_wallet1", 0)
+            wallet2 = self.ton.CreateWallet("proxy_wallet2", 0)
+
+            self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins, timeout=120)
+
+            # Wait for wallet1 to be funded
+            import time
+            for _ in range(20):
+                self.ton.local.buffer.pop("account" + str(wallet1.addrB64), None)
+                self.ton.local.buffer.pop("account" + str(wallet1.addrB64_init), None)
+                account1 = self.ton.GetAccount(wallet1.addrB64)
+                if account1.status != 'empty':
+                    break
+                time.sleep(3)
+            else:
+                raise Exception(f"Proxy wallet {wallet1.name} did not receive funds in time.")
+
+            self.ton.ActivateWallet(wallet1)
+
+            self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld", timeout=120)
+
+            # Wait for wallet2 to be funded
+            for _ in range(20):
+                self.ton.local.buffer.pop("account" + str(wallet2.addrB64), None)
+                self.ton.local.buffer.pop("account" + str(wallet2.addrB64_init), None)
+                account2 = self.ton.GetAccount(wallet2.addrB64)
+                if account2.status != 'empty':
+                    break
+                time.sleep(3)
+            else:
+                raise Exception(f"Proxy wallet {wallet2.name} did not receive funds in time.")
+
+            self.ton.ActivateWallet(wallet2)
+            self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
+        finally:
+            if wallet1:
+                wallet1.Delete()
+            if wallet2:
+                wallet2.Delete()
     # end define
 
     def move_coins_through_proxy(self, args):
