@@ -191,10 +191,9 @@ class MyTonCore():
 			if buff:
 				return buff
 		#end if
-		account = Account()
-		account.addrB64 = inputAddr
 		workchain, addr = self.ParseInputAddr(inputAddr)
 		account = Account(workchain, addr)
+		account.addrB64 = inputAddr
 		cmd = "getaccount {inputAddr}".format(inputAddr=inputAddr)
 		result = self.liteClient.Run(cmd)
 		storage = self.GetVarFromWorkerOutput(result, "storage")
