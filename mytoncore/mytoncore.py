@@ -1739,7 +1739,11 @@ class MyTonCore():
 		# Force clear cache for this wallet
 		self.local.buffer.pop("account" + str(wallet.addrB64), None)
 		self.local.buffer.pop("account" + str(wallet.addrB64_init), None)
+		self.local.add_log(f"Cleared cache for wallet {wallet.addrB64}", "debug")
+		
 		account = self.GetAccount(wallet.addrB64, no_cache=True)
+		self.local.add_log(f"Account status for {wallet.addrB64}: {account.status}, balance: {account.balance}", "debug")
+		
 		if account.status == "empty":
 			raise Exception("ActivateWallet error: account status is empty")
 		elif account.status == "active":
