@@ -1275,10 +1275,12 @@ class MyTonCore():
 		timesleep = 3
 		steps = timeout // timesleep
 		initial_seqno = wallet.oldseqno
+		self.local.add_log(f"Initial seqno: {initial_seqno}", "debug")
 		for i in range(steps):
 			time.sleep(timesleep)
 			try:
 				seqno = self.GetSeqno(wallet)
+				self.local.add_log(f"Current seqno: {seqno}", "debug")
 			except:
 				self.local.add_log("WaitTransaction error: Can't get seqno", "warning")
 				continue
@@ -1286,6 +1288,7 @@ class MyTonCore():
 				self.local.add_log("WaitTransaction success", "info")
 				return
 		# If we reach here, seqno didn't change, which means transaction failed
+		self.local.add_log(f"WaitTransaction failed: seqno did not change from {initial_seqno}", "error")
 		raise Exception("WaitTransaction error: transaction failed - seqno did not change")
 	#end define
 
