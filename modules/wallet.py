@@ -196,7 +196,15 @@ class WalletModule(MtcModule):
             self.ton.ActivateWallet(wallet1)
             
             # Transfer to second proxy wallet
-            self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
+            try:
+                # Check wallet1 balance before transfer
+                account1 = self.ton.GetAccount(wallet1.addrB64, no_cache=True)
+                self.local.add_log(f"proxy_wallet1 balance before transfer: {account1.balance}", "debug")
+                
+                self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
+            except Exception as e:
+                self.local.add_log(f"Failed to transfer from proxy_wallet1 to proxy_wallet2: {e}", "error")
+                raise
             
             # Clear cache and activate second proxy wallet
             self.local.buffer.pop("account" + str(wallet2.addrB64), None)
@@ -208,7 +216,15 @@ class WalletModule(MtcModule):
             self.ton.ActivateWallet(wallet2)
             
             # Final transfer to destination
-            self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
+            try:
+                # Check wallet2 balance before transfer
+                account2 = self.ton.GetAccount(wallet2.addrB64, no_cache=True)
+                self.local.add_log(f"proxy_wallet2 balance before transfer: {account2.balance}", "debug")
+                
+                self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
+            except Exception as e:
+                self.local.add_log(f"Failed to transfer from proxy_wallet2 to destination: {e}", "error")
+                raise
             
         finally:
             # Note: Proxy wallets are not automatically deleted to preserve user data
