@@ -168,15 +168,66 @@ class WalletModule(MtcModule):
 
     def do_move_coins_through_proxy(self, wallet, dest, coins):
         self.local.add_log("start MoveCoinsThroughProxy function", "debug")
+        
+        # 創建兩個臨時代理錢包
         wallet1 = self.ton.CreateWallet("proxy_wallet1", 0)
         wallet2 = self.ton.CreateWallet("proxy_wallet2", 0)
-        self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins)
-        self.ton.ActivateWallet(wallet1)
-        self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
-        self.ton.ActivateWallet(wallet2)
-        self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
-        wallet1.Delete()
-        wallet2.Delete()
+        
+        # 檢查源錢包餘額
+        source_account = self.ton.GetAccount(wallet.addrB64)
+        if source_account.balance < float(coins) + 0.1:
+            raise Exception(f"源錢包餘額不足。需要 {float(coins) + 0.1} TON，但只有 {source_account.balance} TON")
+        
+        try:
+            # 第一階段：從源錢包轉移到第一個代理錢包
+            self.local.add_log("第一階段：轉移到代理錢包1", "debug")
+            self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins)
+            
+            # 等待交易確認
+            self.ton.WaitTransaction(wallet)
+            
+            # 檢查代理錢包1的狀態並啟動
+            wallet1_account = self.ton.GetAccount(wallet1.addrB64)
+            if wallet1_account.status == "uninit":
+                self.local.add_log("啟動代理錢包1", "debug")
+                self.ton.SendFile(wallet1.bocFilePath, wallet1, remove=False)
+                self.ton.WaitTransaction(wallet1)
+            elif wallet1_account.status == "empty":
+                raise Exception("代理錢包1轉移失敗，帳戶狀態為空")
+            
+            # 第二階段：從代理錢包1轉移到代理錢包2
+            self.local.add_log("第二階段：轉移到代理錢包2", "debug")
+            self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
+            
+            # 等待交易確認
+            self.ton.WaitTransaction(wallet1)
+            
+            # 檢查代理錢包2的狀態並啟動
+            wallet2_account = self.ton.GetAccount(wallet2.addrB64)
+            if wallet2_account.status == "uninit":
+                self.local.add_log("啟動代理錢包2", "debug")
+                self.ton.SendFile(wallet2.bocFilePath, wallet2, remove=False)
+                self.ton.WaitTransaction(wallet2)
+            elif wallet2_account.status == "empty":
+                raise Exception("代理錢包2轉移失敗，帳戶狀態為空")
+            
+            # 第三階段：從代理錢包2轉移到最終目標
+            self.local.add_log("第三階段：轉移到最終目標", "debug")
+            self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
+            
+            # 等待最終交易確認
+            self.ton.WaitTransaction(wallet2)
+            
+        except Exception as e:
+            self.local.add_log(f"代理轉移過程中發生錯誤: {str(e)}", "error")
+            raise e
+        finally:
+            # 清理臨時錢包
+            try:
+                wallet1.Delete()
+                wallet2.Delete()
+            except Exception as e:
+                self.local.add_log(f"清理臨時錢包時發生錯誤: {str(e)}", "warning")
     # end define
 
     def move_coins_through_proxy(self, args):
@@ -187,10 +238,37 @@ class WalletModule(MtcModule):
         except:
             color_print("{red}Bad args. Usage:{endc} mgtp <wallet-name> <account-addr | bookmark-name> <amount>")
             return
-        wallet = self.ton.GetLocalWallet(wallet_name)
-        destination = self.ton.get_destination_addr(destination)
-        self.do_move_coins_through_proxy(wallet, destination, amount)
-        color_print("MoveCoinsThroughProxy - {green}OK{endc}")
+        
+        try:
+            # 獲取源錢包
+            wallet = self.ton.GetLocalWallet(wallet_name)
+            if wallet is None:
+                color_print("{red}錯誤：找不到錢包 '{wallet_name}'{endc}")
+                return
+            
+            # 獲取目標地址
+            destination = self.ton.get_destination_addr(destination)
+            if destination is None:
+                color_print("{red}錯誤：無效的目標地址{endc}")
+                return
+            
+            # 驗證金額
+            try:
+                amount_float = float(amount)
+                if amount_float <= 0:
+                    color_print("{red}錯誤：金額必須大於 0{endc}")
+                    return
+            except ValueError:
+                color_print("{red}錯誤：無效的金額格式{endc}")
+                return
+            
+            # 執行代理轉移
+            self.do_move_coins_through_proxy(wallet, destination, amount)
+            color_print("MoveCoinsThroughProxy - {green}OK{endc}")
+            
+        except Exception as e:
+            color_print(f"{{red}}代理轉移失敗：{str(e)}{{endc}}")
+            self.local.add_log(f"mgtp error: {str(e)}", "error")
     # end define
 
     def add_console_commands(self, console):

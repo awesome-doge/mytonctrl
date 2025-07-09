@@ -1717,12 +1717,19 @@ class MyTonCore():
 	def ActivateWallet(self, wallet):
 		self.local.add_log("start ActivateWallet function", "debug")
 		account = self.GetAccount(wallet.addrB64)
+		
 		if account.status == "empty":
-			raise Exception("ActivateWallet error: account status is empty")
+			self.local.add_log("ActivateWallet warning: account status is empty, wallet may not have been funded yet", "warning")
+			# 對於空帳戶，我們不拋出異常，而是記錄警告
+			return
 		elif account.status == "active":
 			self.local.add_log("ActivateWallet warning: account status is active", "warning")
-		else:
+		elif account.status == "uninit":
+			# 對於未初始化的帳戶，嘗試發送初始化交易
+			self.local.add_log("ActivateWallet: sending initialization transaction", "debug")
 			self.SendFile(wallet.bocFilePath, wallet, remove=False)
+		else:
+			self.local.add_log(f"ActivateWallet: unknown account status '{account.status}'", "warning")
 	#end define
 
 	def import_wallet_with_version(self, key, version, **kwargs):
