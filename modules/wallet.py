@@ -166,59 +166,72 @@ class WalletModule(MtcModule):
         color_print("MoveCoins - {green}OK{endc}")
     # end define
 
+    def cleanup_old_proxy_wallets(self):
+        """Clean up any leftover proxy wallets from previous operations"""
+        self.local.add_log("start cleanup_old_proxy_wallets function", "debug")
+        try:
+            wallets_list = self.ton.GetWalletsNameList()
+            for wallet_name in wallets_list:
+                if wallet_name.startswith("proxy_wallet"):
+                    try:
+                        wallet = self.ton.GetLocalWallet(wallet_name)
+                        wallet.Delete()
+                        self.local.add_log(f"Cleaned up old proxy wallet: {wallet_name}", "debug")
+                    except Exception as e:
+                        self.local.add_log(f"Failed to clean up proxy wallet {wallet_name}: {e}", "warning")
+        except Exception as e:
+            self.local.add_log(f"cleanup_old_proxy_wallets error: {e}", "warning")
+    # end define
+
     def do_move_coins_through_proxy(self, wallet, dest, coins):
         self.local.add_log("start MoveCoinsThroughProxy function", "debug")
-        wallet1, wallet2 = None, None
+        
+        # Clean up any old proxy wallets first
+        self.cleanup_old_proxy_wallets()
+        
+        import time
+        timestamp = str(int(time.time()))
+        wallet1_name = f"proxy_wallet1_{timestamp}"
+        wallet2_name = f"proxy_wallet2_{timestamp}"
+        
         try:
-            # Delete wallets from previous runs to ensure a clean state
-            try:
-                old_wallet1 = self.ton.GetLocalWallet("proxy_wallet1", "v1")
-                if old_wallet1: old_wallet1.Delete()
-            except Exception: pass
-            try:
-                old_wallet2 = self.ton.GetLocalWallet("proxy_wallet2", "v1")
-                if old_wallet2: old_wallet2.Delete()
-            except Exception: pass
-
-            wallet1 = self.ton.CreateWallet("proxy_wallet1", 0)
-            wallet2 = self.ton.CreateWallet("proxy_wallet2", 0)
-
-            self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins, timeout=120)
-
-            # Wait for wallet1 to be funded
-            import time
-            for _ in range(20):
-                self.ton.local.buffer.pop("account" + str(wallet1.addrB64), None)
-                self.ton.local.buffer.pop("account" + str(wallet1.addrB64_init), None)
-                account1 = self.ton.GetAccount(wallet1.addrB64)
-                if account1.status != 'empty':
-                    break
-                time.sleep(3)
-            else:
-                raise Exception(f"Proxy wallet {wallet1.name} did not receive funds in time.")
-
+            # Clear cache for source wallet
+            self.local.buffer.pop("account" + str(wallet.addrB64), None)
+            self.local.buffer.pop("account" + str(wallet.addrB64_init), None)
+            
+            # Create unique proxy wallets
+            wallet1 = self.ton.CreateWallet(wallet1_name, 0)
+            wallet2 = self.ton.CreateWallet(wallet2_name, 0)
+            
+            # Transfer to first proxy wallet
+            self.ton.MoveCoins(wallet, wallet1.addrB64_init, coins)
+            
+            # Clear cache and activate first proxy wallet
+            self.local.buffer.pop("account" + str(wallet1.addrB64), None)
+            self.local.buffer.pop("account" + str(wallet1.addrB64_init), None)
             self.ton.ActivateWallet(wallet1)
-
-            self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld", timeout=120)
-
-            # Wait for wallet2 to be funded
-            for _ in range(20):
-                self.ton.local.buffer.pop("account" + str(wallet2.addrB64), None)
-                self.ton.local.buffer.pop("account" + str(wallet2.addrB64_init), None)
-                account2 = self.ton.GetAccount(wallet2.addrB64)
-                if account2.status != 'empty':
-                    break
-                time.sleep(3)
-            else:
-                raise Exception(f"Proxy wallet {wallet2.name} did not receive funds in time.")
-
+            
+            # Transfer to second proxy wallet
+            self.ton.MoveCoins(wallet1, wallet2.addrB64_init, "alld")
+            
+            # Clear cache and activate second proxy wallet
+            self.local.buffer.pop("account" + str(wallet2.addrB64), None)
+            self.local.buffer.pop("account" + str(wallet2.addrB64_init), None)
             self.ton.ActivateWallet(wallet2)
+            
+            # Final transfer to destination
             self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
+            
         finally:
-            if wallet1:
+            # Ensure proxy wallets are always cleaned up
+            try:
                 wallet1.Delete()
-            if wallet2:
+            except:
+                pass
+            try:
                 wallet2.Delete()
+            except:
+                pass
     # end define
 
     def move_coins_through_proxy(self, args):
@@ -235,6 +248,12 @@ class WalletModule(MtcModule):
         color_print("MoveCoinsThroughProxy - {green}OK{endc}")
     # end define
 
+    def cleanup_proxy_wallets_cmd(self, args):
+        """Console command to clean up proxy wallets"""
+        self.cleanup_old_proxy_wallets()
+        color_print("Proxy wallets cleanup completed - {green}OK{endc}")
+    # end define
+
     def add_console_commands(self, console):
         console.AddItem("nw", self.create_new_wallet, self.local.translate("nw_cmd"))
         console.AddItem("aw", self.activate_wallet, self.local.translate("aw_cmd"))
@@ -245,3 +264,4 @@ class WalletModule(MtcModule):
         console.AddItem("dw", self.delete_wallet, self.local.translate("dw_cmd"))
         console.AddItem("mg", self.move_coins, self.local.translate("mg_cmd"))
         console.AddItem("mgtp", self.move_coins_through_proxy, self.local.translate("mgtp_cmd"))
+        console.AddItem("cleanup_proxy", self.cleanup_proxy_wallets_cmd, "Clean up old proxy wallets")
