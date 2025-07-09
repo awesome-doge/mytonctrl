@@ -166,28 +166,8 @@ class WalletModule(MtcModule):
         color_print("MoveCoins - {green}OK{endc}")
     # end define
 
-    def cleanup_old_proxy_wallets(self):
-        """Clean up any leftover proxy wallets from previous operations"""
-        self.local.add_log("start cleanup_old_proxy_wallets function", "debug")
-        try:
-            wallets_list = self.ton.GetWalletsNameList()
-            for wallet_name in wallets_list:
-                if wallet_name.startswith("proxy_wallet"):
-                    try:
-                        wallet = self.ton.GetLocalWallet(wallet_name)
-                        wallet.Delete()
-                        self.local.add_log(f"Cleaned up old proxy wallet: {wallet_name}", "debug")
-                    except Exception as e:
-                        self.local.add_log(f"Failed to clean up proxy wallet {wallet_name}: {e}", "warning")
-        except Exception as e:
-            self.local.add_log(f"cleanup_old_proxy_wallets error: {e}", "warning")
-    # end define
-
     def do_move_coins_through_proxy(self, wallet, dest, coins):
         self.local.add_log("start MoveCoinsThroughProxy function", "debug")
-        
-        # Clean up any old proxy wallets first
-        self.cleanup_old_proxy_wallets()
         
         import time
         timestamp = str(int(time.time()))
@@ -223,15 +203,8 @@ class WalletModule(MtcModule):
             self.ton.MoveCoins(wallet2, dest, "alld", flags=["-n"])
             
         finally:
-            # Ensure proxy wallets are always cleaned up
-            try:
-                wallet1.Delete()
-            except:
-                pass
-            try:
-                wallet2.Delete()
-            except:
-                pass
+            # Note: Proxy wallets are not automatically deleted to preserve user data
+            pass
     # end define
 
     def move_coins_through_proxy(self, args):
@@ -248,12 +221,6 @@ class WalletModule(MtcModule):
         color_print("MoveCoinsThroughProxy - {green}OK{endc}")
     # end define
 
-    def cleanup_proxy_wallets_cmd(self, args):
-        """Console command to clean up proxy wallets"""
-        self.cleanup_old_proxy_wallets()
-        color_print("Proxy wallets cleanup completed - {green}OK{endc}")
-    # end define
-
     def add_console_commands(self, console):
         console.AddItem("nw", self.create_new_wallet, self.local.translate("nw_cmd"))
         console.AddItem("aw", self.activate_wallet, self.local.translate("aw_cmd"))
@@ -264,4 +231,3 @@ class WalletModule(MtcModule):
         console.AddItem("dw", self.delete_wallet, self.local.translate("dw_cmd"))
         console.AddItem("mg", self.move_coins, self.local.translate("mg_cmd"))
         console.AddItem("mgtp", self.move_coins_through_proxy, self.local.translate("mgtp_cmd"))
-        console.AddItem("cleanup_proxy", self.cleanup_proxy_wallets_cmd, "Clean up old proxy wallets")
