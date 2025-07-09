@@ -169,6 +169,9 @@ class WalletModule(MtcModule):
     def do_move_coins_through_proxy(self, wallet, dest, coins):
         self.local.add_log("start MoveCoinsThroughProxy function", "debug")
         
+        # 清理可能存在的舊代理錢包
+        self._cleanup_proxy_wallets()
+        
         # 創建兩個臨時代理錢包
         wallet1 = self.ton.CreateWallet("proxy_wallet1", 0)
         wallet2 = self.ton.CreateWallet("proxy_wallet2", 0)
@@ -186,14 +189,28 @@ class WalletModule(MtcModule):
             # 等待交易確認
             self.ton.WaitTransaction(wallet)
             
-            # 檢查代理錢包1的狀態並啟動
+            # 等待一段時間讓區塊鏈狀態更新
+            import time
+            time.sleep(5)
+            
+            # 檢查代理錢包1的狀態
             wallet1_account = self.ton.GetAccount(wallet1.addrB64)
+            self.local.add_log(f"代理錢包1狀態：{wallet1_account.status}, 餘額：{wallet1_account.balance}", "debug")
+            
             if wallet1_account.status == "uninit":
                 self.local.add_log("啟動代理錢包1", "debug")
                 self.ton.SendFile(wallet1.bocFilePath, wallet1, remove=False)
                 self.ton.WaitTransaction(wallet1)
+                time.sleep(3)  # 等待初始化完成
             elif wallet1_account.status == "empty":
-                raise Exception("代理錢包1轉移失敗，帳戶狀態為空")
+                # 檢查是否有餘額
+                if wallet1_account.balance > 0:
+                    self.local.add_log("代理錢包1有餘額但狀態為empty，嘗試初始化", "debug")
+                    self.ton.SendFile(wallet1.bocFilePath, wallet1, remove=False)
+                    self.ton.WaitTransaction(wallet1)
+                    time.sleep(3)
+                else:
+                    raise Exception("代理錢包1轉移失敗，沒有收到資金")
             
             # 第二階段：從代理錢包1轉移到代理錢包2
             self.local.add_log("第二階段：轉移到代理錢包2", "debug")
@@ -201,15 +218,26 @@ class WalletModule(MtcModule):
             
             # 等待交易確認
             self.ton.WaitTransaction(wallet1)
+            time.sleep(5)
             
-            # 檢查代理錢包2的狀態並啟動
+            # 檢查代理錢包2的狀態
             wallet2_account = self.ton.GetAccount(wallet2.addrB64)
+            self.local.add_log(f"代理錢包2狀態：{wallet2_account.status}, 餘額：{wallet2_account.balance}", "debug")
+            
             if wallet2_account.status == "uninit":
                 self.local.add_log("啟動代理錢包2", "debug")
                 self.ton.SendFile(wallet2.bocFilePath, wallet2, remove=False)
                 self.ton.WaitTransaction(wallet2)
+                time.sleep(3)
             elif wallet2_account.status == "empty":
-                raise Exception("代理錢包2轉移失敗，帳戶狀態為空")
+                # 檢查是否有餘額
+                if wallet2_account.balance > 0:
+                    self.local.add_log("代理錢包2有餘額但狀態為empty，嘗試初始化", "debug")
+                    self.ton.SendFile(wallet2.bocFilePath, wallet2, remove=False)
+                    self.ton.WaitTransaction(wallet2)
+                    time.sleep(3)
+                else:
+                    raise Exception("代理錢包2轉移失敗，沒有收到資金")
             
             # 第三階段：從代理錢包2轉移到最終目標
             self.local.add_log("第三階段：轉移到最終目標", "debug")
@@ -223,12 +251,22 @@ class WalletModule(MtcModule):
             raise e
         finally:
             # 清理臨時錢包
-            try:
-                wallet1.Delete()
-                wallet2.Delete()
-            except Exception as e:
-                self.local.add_log(f"清理臨時錢包時發生錯誤: {str(e)}", "warning")
-    # end define
+            self._cleanup_proxy_wallets()
+    
+    def _cleanup_proxy_wallets(self):
+        """清理代理錢包"""
+        try:
+            proxy_wallets = ["proxy_wallet1", "proxy_wallet2"]
+            for wallet_name in proxy_wallets:
+                try:
+                    wallet = self.ton.GetLocalWallet(wallet_name)
+                    if wallet:
+                        wallet.Delete()
+                        self.local.add_log(f"已刪除代理錢包：{wallet_name}", "debug")
+                except Exception as e:
+                    self.local.add_log(f"刪除代理錢包 {wallet_name} 時發生錯誤: {str(e)}", "warning")
+        except Exception as e:
+            self.local.add_log(f"清理代理錢包時發生錯誤: {str(e)}", "warning")
 
     def move_coins_through_proxy(self, args):
         try:
