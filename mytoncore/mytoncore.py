@@ -1274,6 +1274,7 @@ class MyTonCore():
 		self.local.add_log("start WaitTransaction function", "debug")
 		timesleep = 3
 		steps = timeout // timesleep
+		initial_seqno = wallet.oldseqno
 		for i in range(steps):
 			time.sleep(timesleep)
 			try:
@@ -1281,10 +1282,11 @@ class MyTonCore():
 			except:
 				self.local.add_log("WaitTransaction error: Can't get seqno", "warning")
 				continue
-			if seqno != wallet.oldseqno:
+			if seqno != initial_seqno:
 				self.local.add_log("WaitTransaction success", "info")
 				return
-		raise Exception("WaitTransaction error: time out")
+		# If we reach here, seqno didn't change, which means transaction failed
+		raise Exception("WaitTransaction error: transaction failed - seqno did not change")
 	#end define
 
 	def GetReturnedStake(self, fullElectorAddr, inputAddr):
