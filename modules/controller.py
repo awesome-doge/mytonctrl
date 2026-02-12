@@ -197,7 +197,7 @@ class ControllerModule(MtcModule):
     def recover_stake(self, args):
         try:
             controller_addr = args[0]
-        except:
+        except Exception:
             color_print("{red}Bad args. Usage:{endc} recover_stake <controller-addr>")
             return
         self.ton.ControllerRecoverStake(controller_addr)
