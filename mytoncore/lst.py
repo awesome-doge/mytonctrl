@@ -454,26 +454,34 @@ def check_controller_risks(
             ))
         if data.get("halted"):
             out.append(("crit", "controller_halted", f"controller {short} 已 halted"))
-        # controller.func:315,341 —— count 沒到 2 就永遠 recover 不了。
-        # 若 controller 中途 halted 或 INSOLVENT，count 會凍結，
-        # 質押金就永久卡在 elector。
+        # validator_set_changes_count 在每次 new_stake 時歸零（controller.func:423），
+        # 只有驗證者集合真的換屆、呼叫 update_validator_hash 才會遞增。
+        # 「輪次進行中 + count=0」是完全正常的 —— 用 validator_set_change_time
+        # 判斷會把正常質押中的 controller 全部誤判成卡死。
+        # 真正卡住的條件：質押那一輪早就結束、質押金早該解凍，count 卻還沒到 2。
         count = _to_int(data.get("validator_set_changes_count"))
-        change_time = _to_int(data.get("validator_set_change_time")) or 0
+        stake_at = _to_int(data.get("stake_at")) or 0
+        held = _to_int(data.get("stake_held_for")) or 0
+        elected_for = item.get("validators_elected_for")
         now = item.get("now") or 0
         if (
             state == 3
             and isinstance(count, int)
             and count < 2
+            and stake_at
+            and held
+            and elected_for
             and now
-            and change_time
-            and now - change_time > CONTROLLER_GRACE_PERIOD
         ):
-            out.append((
-                "crit", "controller_stake_stuck",
-                f"controller {short} 在 FUNDS_STAKEN 但 validator_set_changes_count="
-                f"{count}（需要 ≥2）—— 質押金無法從 elector 取回，"
-                "請確認 update_validator_hash 有在執行",
-            ))
+            unfreeze_at = stake_at + elected_for + held
+            if now > unfreeze_at + CONTROLLER_GRACE_PERIOD:
+                out.append((
+                    "crit", "controller_stake_stuck",
+                    f"controller {short} 的質押金應於 {unfreeze_at} 解凍，"
+                    f"已逾時 {(now - unfreeze_at) / 3600:.1f} 小時，但 "
+                    f"validator_set_changes_count={count}（需 ≥2）—— "
+                    "無法從 elector 取回，請確認 update_validator_hash 有在執行",
+                ))
 
         # controller.func:295-297 —— halted 時 recover_stake 被封鎖。
         # 若同時處於 FUNDS_STAKEN，資金就卡在 elector 且只能靠 sudoer 救。

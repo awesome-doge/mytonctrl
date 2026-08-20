@@ -393,13 +393,33 @@ def test_withdrawal_liquidity_gate():
 
 
 def test_controller_stake_stuck_in_elector():
-    """controller.func:315 —— count 沒到 2 就永遠 recover 不了。"""
+    """controller.func:315 —— count 沒到 2 就永遠 recover 不了。
+
+    但 count 在每次 new_stake 時歸零（controller.func:423），
+    所以「輪次進行中 + count=0」是正常的，不能誤報。
+    """
     from mytoncore.lst import check_controller_risks
 
+    elected_for, held = 65536, 32768
+    stake_at = 2_000_000_000
+
+    # 輪次進行中 —— 質押金還沒到解凍時間，不該告警
     found = check_controller_risks([{
-        "addr": "Ef_stuck", "balance": 100.0, "now": 2_000_000_000,
+        "addr": "Ef_ok", "balance": 100.0, "validators_elected_for": elected_for,
+        "now": stake_at + 1000,
+        "data": {"state": 3, "approved": -1, "validator_set_changes_count": 0,
+                 "stake_at": stake_at, "stake_held_for": held},
+    }])
+    assert "controller_stake_stuck" not in [k for _s, k, _m in found], (
+        "輪次進行中不該誤報成卡死"
+    )
+
+    # 早該解凍卻 count 還沒到 2 —— 真的卡住
+    found = check_controller_risks([{
+        "addr": "Ef_stuck", "balance": 100.0, "validators_elected_for": elected_for,
+        "now": stake_at + elected_for + held + 7200,
         "data": {"state": 3, "approved": -1, "validator_set_changes_count": 1,
-                 "validator_set_change_time": 1_999_990_000},
+                 "stake_at": stake_at, "stake_held_for": held},
     }])
     assert "controller_stake_stuck" in [k for _s, k, _m in found]
 
