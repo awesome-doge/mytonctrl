@@ -514,3 +514,73 @@ def test_librarian_balance_thresholds():
     assert "librarian_balance_low" in [k for _s, k, _m in check_librarian(30.0, "EQlib")]
     assert check_librarian(250.0, "EQlib") == []
     assert "librarian_unreachable" in [k for _s, k, _m in check_librarian(None, "EQlib")]
+
+
+# ── 三類卡死條件 ──────────────────────────────────────────────────
+
+def test_validator_wallet_empty_is_critical():
+    """每一筆 controller 交易都由 validator wallet 付費並簽章。
+    它空了 = 全部停擺，而且不會有錯誤訊息（根本沒送出）。"""
+    from mytoncore.lst import check_validator_wallet
+
+    keys = [k for _s, k, _m in check_validator_wallet(0.0, "Ef_wallet")]
+    assert "validator_wallet_empty" in keys
+    keys = [k for _s, k, _m in check_validator_wallet(12.0, "Ef_wallet")]
+    assert "validator_wallet_low" in keys
+    assert check_validator_wallet(100.0, "Ef_wallet") == []
+    assert "validator_wallet_unknown" in [k for _s, k, _m in check_validator_wallet(None, "Ef_w")]
+
+
+def test_max_loan_above_allocation():
+    """controller.func:471 —— allocation 非 0 時是硬上限。"""
+    from mytoncore.lst import NANO, check_stake_feasibility
+
+    controllers = [{
+        "addr": "Ef_c", "balance": 100000.0,
+        "data": {"allocation": 500_000 * NANO},
+    }]
+    keys = [k for _s, k, _m in check_stake_feasibility(controllers, max_loan=600_000.0)]
+    assert "max_loan_above_allocation" in keys
+
+    keys = [k for _s, k, _m in check_stake_feasibility(controllers, max_loan=400_000.0)]
+    assert "max_loan_above_allocation" not in keys
+
+    # allocation == 0 代表無上限
+    controllers[0]["data"]["allocation"] = 0
+    keys = [k for _s, k, _m in check_stake_feasibility(controllers, max_loan=10**9)]
+    assert "max_loan_above_allocation" not in keys
+
+
+def test_stake_below_contract_minimum():
+    """controller.func:400 —— 借到錢也可能過不了 new_stake 的 50,000 TON 門檻，
+    那筆借款就只能原封還回去。這是 max_loan 沒調好的典型卡死。"""
+    from mytoncore.lst import check_stake_feasibility
+
+    controllers = [{"addr": "Ef_c", "balance": 100.0, "data": {"allocation": 0}}]
+    keys = [k for _s, k, _m in check_stake_feasibility(controllers, max_loan=1000.0)]
+    assert "stake_below_contract_minimum" in keys
+
+    # 借夠多就過得了合約門檻，但仍可能低於網路門檻
+    keys = [k for _s, k, _m in check_stake_feasibility(
+        controllers, max_loan=100_000.0, network_min_stake=300_000.0)]
+    assert "stake_below_contract_minimum" not in keys
+    assert "stake_below_network_minimum" in keys
+
+
+def test_ton_binary_age():
+    """沒做 mytonctrl upgrade，網路升級後會跟不上。"""
+    import time as _t
+
+    from mytoncore.lst import check_ton_version
+
+    now = int(_t.time())
+    fresh = _t.strftime("%Y-%m-%d %H:%M:%S", _t.gmtime(now - 10 * 86400))
+    assert check_ton_version(fresh, now) == []
+
+    aging = _t.strftime("%Y-%m-%d %H:%M:%S", _t.gmtime(now - 150 * 86400))
+    assert "ton_binary_aging" in [k for _s, k, _m in check_ton_version(aging, now)]
+
+    stale = _t.strftime("%Y-%m-%d %H:%M:%S", _t.gmtime(now - 300 * 86400))
+    assert "ton_binary_stale" in [k for _s, k, _m in check_ton_version(stale, now)]
+
+    assert check_ton_version(None, now) == []

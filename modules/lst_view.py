@@ -18,6 +18,7 @@ from mypylib.mypylib import bcolors
 
 from mytoncore.lst import (
     CONTROLLER_STATES,
+    MIN_STAKE_TO_SEND,
     NODE_STATE_KEYS,
     LOAN_SETTING_DEFAULTS,
     NANO,
@@ -26,6 +27,9 @@ from mytoncore.lst import (
     check_loan_settings,
     check_librarian,
     check_node_state,
+    check_stake_feasibility,
+    check_ton_version,
+    check_validator_wallet,
     check_payout_risks,
     check_pool_risks,
     controller_stake_readiness,
@@ -253,6 +257,31 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
             payouts.append(info)
             _ = current_round_id
 
+    # validator wallet —— 每一筆 controller 交易都由它付費並簽章
+    wallet_addr = None
+    wallet_balance = None
+    wallet = local.try_function(ton.GetValidatorWallet)
+    if wallet is not None:
+        wallet_addr = getattr(wallet, "addrB64", None)
+        if wallet_addr:
+            account = local.try_function(ton.GetAccount, args=[wallet_addr])
+            wallet_balance = getattr(account, "balance", None)
+
+    # TON 二進位檔的建置日期 —— 沒 upgrade 會在網路升級後跟不上
+    ton_build_date = None
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            [str(ton.get_paths().ton_bin) + "/validator-engine/validator-engine", "--version"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        marker = "Date: "
+        if marker in out:
+            ton_build_date = out.split(marker, 1)[1].split("]")[0].strip()
+    except Exception as ex:
+        local.add_log(f"lst: 讀不到 validator-engine 版本 {ex}", "debug")
+
     # librarian 位址不在任何 get method 裡，需手動指定
     librarian_addr = db.get("lst_librarian_addr")
     librarian_balance = None
@@ -283,7 +312,9 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         "settings": settings,
         "node_state": node_state,
         "node_risks": check_node_state(node_state)
-        + check_librarian(librarian_balance, librarian_addr),
+        + check_librarian(librarian_balance, librarian_addr)
+        + check_validator_wallet(wallet_balance, wallet_addr)
+        + check_ton_version(ton_build_date, now),
         "payouts": payouts,
         "payout_risks": check_payout_risks(payouts),
         "librarian": {"addr": librarian_addr, "balance": librarian_balance},
@@ -291,7 +322,14 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         "pools": pools,
         "controllers": controllers,
         "controller_risks": check_controller_risks(controllers)
-        + check_controller_loan_readiness(controllers),
+        + check_controller_loan_readiness(controllers)
+        + check_stake_feasibility(
+            controllers,
+            max_loan=float(settings["max_loan"]) if settings.get("max_loan") else None,
+            network_min_stake=min_stake,
+        ),
+        "validator_wallet": {"addr": wallet_addr, "balance": wallet_balance},
+        "ton_build_date": ton_build_date,
         "loan_risks": loan_risks,
     }
 
@@ -424,6 +462,16 @@ def render(report: dict[str, Any]) -> None:
             ("排隊中提款", f"{len(pending)} 筆" if pending else "無"),
             ("db backup 年齡", f"{backup_age / 3600:.1f} 小時"
              if isinstance(backup_age, (int, float)) else "n/a"),
+        ])
+        wallet = report.get("validator_wallet") or {}
+        wallet_balance = wallet.get("balance")
+        print()
+        _kv([
+            ("validator wallet", _short(wallet.get("addr"), 12)),
+            ("錢包餘額", f"{wallet_balance:,.2f} TON"
+             if isinstance(wallet_balance, (int, float)) else "n/a"),
+            ("TON 建置日期", report.get("ton_build_date") or "n/a"),
+            ("合約質押下限", f"{MIN_STAKE_TO_SEND:,.0f} TON"),
         ])
 
     payouts: list[dict[str, Any]] = report.get("payouts") or []

@@ -819,3 +819,133 @@ def check_librarian(balance: float | None, addr: str | None) -> list[tuple[str, 
             f"librarian 餘額 {balance:,.2f} TON 偏低（建議充值水位 250 TON）",
         )]
     return []
+
+
+# ── 三類會讓 LST 卡死的條件 ──────────────────────────────────────
+
+# controller.func:29 —— 送進 elector 的金額下限，與網路 config17 的
+# min_stake 是兩回事，兩個都要過
+MIN_STAKE_TO_SEND = 50_000.0
+# controller.func:402 —— 質押後 controller 必須留下的金額
+# （MAX_OVERDUE_FINE 40 + MIN_TONS_FOR_STORAGE 2）
+OVERDUE_FINE_AND_STORAGE = 42.0
+
+# validator wallet 為每一筆 controller 交易付費並簽章：
+# 借款 1.01 / 參選 1.03 / 回收 1.04 / 還款 1.05 / 提款 1.06 / 更新 hash 1.07。
+# 一輪一個 controller 約 6.3 TON（hash 最多更新 3 次），兩個約 12.6 TON。
+VALIDATOR_WALLET_CRIT_TON = 5.0
+VALIDATOR_WALLET_WARN_TON = 20.0
+
+# TON 二進位檔太舊會在網路升級後無法跟上
+TON_BUILD_WARN_DAYS = 120
+TON_BUILD_CRIT_DAYS = 240
+
+
+def check_validator_wallet(balance: float | None, addr: str | None) -> list[tuple[str, str, str]]:
+    """validator wallet 沒錢 = 所有 controller 操作全部停擺。
+
+    這是最容易被忽略的卡死原因：controller 本身有錢、池子也正常，
+    但沒有任何交易送得出去，而且不會有錯誤訊息——因為根本沒送出。
+    """
+    if balance is None:
+        return [("warn", "validator_wallet_unknown", "讀不到 validator wallet 餘額")]
+    short = f"{addr[:10]}…" if addr else "?"
+    if balance < VALIDATOR_WALLET_CRIT_TON:
+        return [(
+            "crit", "validator_wallet_empty",
+            f"validator wallet {short} 只剩 {balance:,.2f} TON —— "
+            "借款／參選／回收／提款的每一筆交易都由它付費，"
+            "耗盡後所有 controller 操作全部停擺且不會有錯誤訊息",
+        )]
+    if balance < VALIDATOR_WALLET_WARN_TON:
+        return [(
+            "warn", "validator_wallet_low",
+            f"validator wallet {short} 餘額 {balance:,.2f} TON 偏低 —— "
+            "一輪兩個 controller 約需 12.6 TON",
+        )]
+    return []
+
+
+def check_stake_feasibility(
+    controllers: list[dict[str, Any]],
+    *,
+    max_loan: float | None = None,
+    network_min_stake: float | None = None,
+) -> list[tuple[str, str, str]]:
+    """借款金額與質押門檻的相容性。
+
+    這是「max_loan / min_loan 沒調好就卡死」的具體判準：借到錢之後
+    仍然過不了 new_stake 的門檻，錢就只能原封還回去。
+    """
+    out: list[tuple[str, str, str]] = []
+    for item in controllers:
+        addr = str(item.get("addr", ""))
+        short = f"{addr[:8]}…" if addr else "?"
+        data = item.get("data") or {}
+        balance = item.get("balance")
+        if not isinstance(balance, (int, float)):
+            continue
+
+        # controller.func:471 —— allocation 為 0 表示無上限
+        allocation = _to_int(data.get("allocation"))
+        if allocation and max_loan and max_loan * NANO > allocation:
+            out.append((
+                "crit", "max_loan_above_allocation",
+                f"max_loan {max_loan:,.0f} TON 超過 controller {short} 的 allocation "
+                f"{allocation / NANO:,.0f} TON —— 借款會被拒絕（0xfa04）",
+            ))
+
+        # 借到 max_loan 之後可質押的金額
+        if max_loan:
+            projected_balance = balance + max_loan
+            # mytoncore 的 LST 分支是 balance - 50
+            stake = projected_balance - 50
+            if stake < MIN_STAKE_TO_SEND:
+                out.append((
+                    "crit", "stake_below_contract_minimum",
+                    f"借到 max_loan 後 controller {short} 只能質押 {stake:,.0f} TON，"
+                    f"低於合約下限 {MIN_STAKE_TO_SEND:,.0f} TON —— "
+                    "new_stake 會被拒絕（0xf902），借來的錢只能原封還回",
+                ))
+            elif network_min_stake and stake < network_min_stake:
+                out.append((
+                    "warn", "stake_below_network_minimum",
+                    f"借到 max_loan 後 controller {short} 只能質押 {stake:,.0f} TON，"
+                    f"低於網路最低質押 {network_min_stake:,.0f} TON —— 無法入選",
+                ))
+            # controller.func:402 —— 質押後必須留下 42 TON
+            elif projected_balance - stake < OVERDUE_FINE_AND_STORAGE:
+                out.append((
+                    "crit", "insufficient_retained_balance",
+                    f"controller {short} 質押後只留下 {projected_balance - stake:,.2f} TON，"
+                    f"低於合約要求的 {OVERDUE_FINE_AND_STORAGE} TON —— new_stake 會被拒絕（0xf903）",
+                ))
+    return out
+
+
+def check_ton_version(build_date: str | None, now: int = 0) -> list[tuple[str, str, str]]:
+    """TON 二進位檔的建置日期。
+
+    網路升級後舊版節點會跟不上；`mytonctrl upgrade` 沒做就會卡死。
+    """
+    if not build_date or not now:
+        return []
+    import datetime
+
+    try:
+        built = datetime.datetime.strptime(build_date[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return []
+    days = (now - built.replace(tzinfo=datetime.timezone.utc).timestamp()) / 86400
+    if days > TON_BUILD_CRIT_DAYS:
+        return [(
+            "crit", "ton_binary_stale",
+            f"validator-engine 建置於 {days:.0f} 天前 —— "
+            "網路升級後可能無法跟上，請執行 mytonctrl upgrade",
+        )]
+    if days > TON_BUILD_WARN_DAYS:
+        return [(
+            "warn", "ton_binary_aging",
+            f"validator-engine 建置於 {days:.0f} 天前，建議近期執行 mytonctrl upgrade",
+        )]
+    return []
