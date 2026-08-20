@@ -1,0 +1,147 @@
+### 自動與官方 mytonctrl 同步
+#
+# 設計原則：lst-v2-compatible 這個分支只會前進到「通過完整驗證」的版本。
+# 任何一關沒過，分支就原地不動，並開 issue 通知。
+# 也就是說它可能「沒更新」，但永遠不會更新成壞掉的版本 ——
+# 因為生產機的 `mytonctrl update` 指向它。
+#
+# 每次執行會做：
+#   1. 取出本分支相對於官方 master 的自訂 commit
+#   2. rebase 到官方最新 master
+#   3. 衝突 → 中止、開 issue、分支不動
+#   4. 跑 ruff / build / pytest（含 tests/unit/test_lst_fork_guard.py，
+#      那支專門確認我們的 LSt v2 等自訂改動沒有在 rebase 中遺失）
+#   5. 全過 → 先備份舊 tip 到 backup/ 分支，再更新 lst-v2-compatible
+#
+# 手動觸發：Actions 頁面 → Sync with upstream → Run workflow
+
+name: Sync with upstream
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # 每週一 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  UPSTREAM: ton-blockchain/mytonctrl
+  TARGET: lst-v2-compatible
+
+jobs:
+  sync:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: lst-v2-compatible
+          fetch-depth: 0
+          submodules: true
+
+      - name: 設定 git 身分並記錄目前 tip
+        run: |
+          git config user.name  "sync-bot"
+          git config user.email "sync-bot@users.noreply.github.com"
+          echo "OLD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: 取得官方上游
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch upstream master
+
+      - name: 計算落差
+        id: gap
+        run: |
+          BASE=$(git merge-base HEAD upstream/master)
+          BEHIND=$(git rev-list --count "$BASE"..upstream/master)
+          AHEAD=$(git rev-list --count "$BASE"..HEAD)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "上游新增 $BEHIND 個 commit；本 fork 自訂 $AHEAD 個 commit"
+
+      - name: 沒有落差就結束
+        if: steps.gap.outputs.behind == '0'
+        run: echo "已經是最新，不需要同步"
+
+      - name: Rebase 到官方最新
+        if: steps.gap.outputs.behind != '0'
+        id: rebase
+        run: |
+          if git rebase upstream/master; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict_files<<EOF" >> "$GITHUB_OUTPUT"
+            git diff --name-only --diff-filter=U >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            git rebase --abort || true
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: 安裝相依套件
+        if: steps.rebase.outputs.ok == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 驗證 — lint
+        if: steps.rebase.outputs.ok == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff==0.15.22 pytest pytest-mock
+          ruff check
+          ruff format mytonctrl/ --check
+
+      - name: 驗證 — build
+        if: steps.rebase.outputs.ok == 'true'
+        run: pip install -U .
+
+      - name: 驗證 — 單元測試（含 fork 守門測試）
+        if: steps.rebase.outputs.ok == 'true'
+        run: pytest tests/unit -q
+
+      - name: 全部通過 → 備份舊版並更新分支
+        if: steps.rebase.outputs.ok == 'true'
+        run: |
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          git push origin "${OLD_SHA}:refs/heads/backup/${TARGET}-${STAMP}"
+          echo "舊版已備份到 backup/${TARGET}-${STAMP}"
+          git push --force-with-lease="refs/heads/${TARGET}:${OLD_SHA}" \
+                   origin "HEAD:refs/heads/${TARGET}"
+          echo "已更新 ${TARGET} → $(git rev-parse --short HEAD)"
+
+      - name: 失敗 → 開 issue 通知（分支維持在上一個已驗證版本）
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conflicts = `${{ steps.rebase.outputs.conflict_files }}`.trim();
+            const reason = conflicts
+              ? `rebase 衝突，衝突檔案：\n\`\`\`\n${conflicts}\n\`\`\``
+              : '驗證未通過（lint / build / 單元測試其中一項失敗）。若失敗的是 `test_lst_fork_guard.py`，代表本 fork 的自訂改動在 rebase 中遺失了。';
+            const body = [
+              '自動同步流程失敗，`${{ env.TARGET }}` 分支**維持在上一個已驗證的版本**，生產機不受影響。',
+              '',
+              reason,
+              '',
+              `執行紀錄：${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '處理方式：在本機執行 `git rebase upstream/master`，解完衝突後推上來即可。',
+            ].join('\n');
+            const title = `自動同步失敗 — ${new Date().toISOString().slice(0,10)}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'sync-upstream',
+            });
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['sync-upstream'],
+              });
+            }
