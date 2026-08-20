@@ -17,6 +17,24 @@ from mytoncore.mytoncore import MyTonCore
 
 # LSt v1 合約的 get_validator_controller_data 回 14 個 stack 值，
 # 我們解析其中 11 個；LSt v2 回 18 個，我們解析 16 個。
+# 合約 get_validator_controller_data() 的完整回傳順序。
+# 來源：KTON-IO/liquid-staking-contract contracts/controller.func
+# （已與 wrappers/Controller.ts getControllerData() 交叉驗證）
+CONTRACT_ORDER_V2 = [
+    "state", "halted", "approved",
+    "stake_amount_sent", "stake_at",
+    "saved_validator_set_hash",
+    "validator_set_changes_count",
+    "validator_set_change_time",
+    "stake_held_for",
+    "interest", "allowed_borrow_start_prior_elections_end",
+    "approver_set_profit_share", "acceptable_profit_share", "allocation",
+    "borrowed_amount", "borrowing_time",
+    # 之後還有 validator / pool / sudoer 三個位址，mytonctrl 不解析
+]
+CONTRACT_TAIL = 3          # validator, pool, sudoer
+V2_STACK_LEN = len(CONTRACT_ORDER_V2) + CONTRACT_TAIL   # 19
+V1_STACK_LEN = 11 + CONTRACT_TAIL                        # 14
 V1_ONLY_LEN = 11
 V2_EXTRA_FIELDS = {
     "interest",
@@ -40,7 +58,7 @@ def _patch_controller_data(ton: MyTonCore, monkeypatch, n_values):
 
 def test_controller_data_lst_v1(ton: MyTonCore, monkeypatch):
     """14 個值（LSt v1）必須走 v1 欄位表，不可出現 v2 專屬欄位。"""
-    data = _patch_controller_data(ton, monkeypatch, 14)
+    data = _patch_controller_data(ton, monkeypatch, V1_STACK_LEN)
     assert data is not None, "LSt v1 解析回傳 None"
     assert ALWAYS_PRESENT <= set(data), f"v1 缺少必要欄位：{ALWAYS_PRESENT - set(data)}"
     assert not (V2_EXTRA_FIELDS & set(data)), "v1 不應出現 v2 專屬欄位"
@@ -49,23 +67,26 @@ def test_controller_data_lst_v1(ton: MyTonCore, monkeypatch):
 
 
 def test_controller_data_lst_v2(ton: MyTonCore, monkeypatch):
-    """18 個值（LSt v2）必須走 v2 欄位表，否則欄位會整排錯位。
+    """19 個值（LSt v2）必須走 v2 欄位表，否則欄位會整排錯位。
 
     這是本 fork 存在的核心理由 —— 錯位會讓 controllers_list、
     get_controller_data、run_elections 全部讀到錯誤的值。
     """
-    data = _patch_controller_data(ton, monkeypatch, 18)
+    data = _patch_controller_data(ton, monkeypatch, V2_STACK_LEN)
     assert data is not None, "LSt v2 解析回傳 None"
     missing = V2_EXTRA_FIELDS - set(data)
     assert not missing, f"LSt v2 支援遺失，缺少欄位：{missing}"
     assert ALWAYS_PRESENT <= set(data)
     # v2 欄位表共 16 項，borrowed_amount 是倒數第二個（索引 14），
     # 而 v1 只有 11 項、borrowed_amount 在索引 9。對錯索引就是欄位錯位。
-    assert len(data) == 16, f"v2 欄位數應為 16，實際 {len(data)}"
-    assert data["borrowed_amount"] == 14, (
-        f"borrowed_amount 對到索引 {data['borrowed_amount']}（應為 14），"
-        "代表 v2 欄位表順序錯了"
+    # 逐欄比對合約的回傳順序 —— 這是最嚴格的檢查：
+    # 只要 mytonctrl 的欄位表與合約有任何一格對不上就會失敗
+    assert list(data.keys()) == CONTRACT_ORDER_V2, (
+        "mytonctrl 的 v2 欄位表與合約 get_validator_controller_data() 不一致\n"
+        f"  實際: {list(data.keys())}\n  合約: {CONTRACT_ORDER_V2}"
     )
+    for i, name in enumerate(CONTRACT_ORDER_V2):
+        assert data[name] == i, f"{name} 對到索引 {data[name]}，應為 {i}"
 
 
 def test_controller_data_none_is_handled(ton: MyTonCore, monkeypatch):

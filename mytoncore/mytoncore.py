@@ -2521,9 +2521,17 @@ class MyTonCore:
 		if data is None:
 			return
 
-		# LSt v1 as default (14 vars)
+		# 欄位順序的唯一來源是合約本身：
+		#   KTON-IO/liquid-staking-contract contracts/controller.func
+		#   get_validator_controller_data()
+		# v1 回 14 個值（11 個具名 + validator/pool/sudoer）
+		# v2 回 19 個值（16 個具名 + validator/pool/sudoer），
+		# 多出 interest / allowed_borrow_start_prior_elections_end /
+		# approver_set_profit_share / acceptable_profit_share / allocation
+		# 尾端三個位址欄位此處不解析。
+		# LSt v1 as default
 		result_vars = ["state", "halted", "approved", "stake_amount_sent", "stake_at", "saved_validator_set_hash", "validator_set_changes_count", "validator_set_change_time", "stake_held_for", "borrowed_amount", "borrowing_time"]
-		if len(data) > 14: # LSt v2 (18 vars)
+		if len(data) > 14: # LSt v2
 			result_vars = ["state", "halted", "approved", "stake_amount_sent", "stake_at", "saved_validator_set_hash", "validator_set_changes_count", "validator_set_change_time", "stake_held_for", "interest", "allowed_borrow_start_prior_elections_end", "approver_set_profit_share", "acceptable_profit_share", "allocation", "borrowed_amount", "borrowing_time"]
 		
 		controllerData = dict()
