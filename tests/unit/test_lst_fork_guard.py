@@ -473,3 +473,44 @@ def test_node_state_checks():
 
     keys = [k for _s, k, _m in check_node_state({"liquid_staking_enabled": False})]
     assert keys == ["lst_mode_disabled"]
+
+
+# ── Payout NFT 與 Librarian ───────────────────────────────────────
+
+def test_payout_not_initialized_is_critical():
+    """nft-collection.func:126 error 67 —— 沒收到 payout::init 就整個癱瘓。"""
+    from mytoncore.lst import check_payout_risks
+
+    found = check_payout_risks([
+        {"pool": "KTON", "kind": "存款", "addr": "EQpayout", "distribution": None},
+    ])
+    assert ("crit", "payout_not_initialized") in [(s, k) for s, k, _ in found]
+
+
+def test_payout_stalled_burn_chain():
+    """nft-item.func:153-158 —— 任一 item gas 不足，整條 burn 鏈停住。"""
+    from mytoncore.lst import check_payout_risks
+
+    found = check_payout_risks([{
+        "pool": "KTON", "kind": "提款", "addr": "EQpayout",
+        "distribution": {"started": True}, "issued_bills": 42,
+    }])
+    assert "payout_distribution_stalled" in [k for _s, k, _m in found]
+
+    # 分配已開始且 bill 全部燒完 → 正常
+    found = check_payout_risks([{
+        "pool": "KTON", "kind": "提款", "addr": "EQpayout",
+        "distribution": {"started": True}, "issued_bills": 0,
+    }])
+    assert found == []
+
+
+def test_librarian_balance_thresholds():
+    """librarian 餘額歸零 = public library 失效 = 全系統癱瘓且無法自救。"""
+    from mytoncore.lst import check_librarian
+
+    assert check_librarian(None, None) == [], "未設定位址時不告警"
+    assert "librarian_balance_critical" in [k for _s, k, _m in check_librarian(5.0, "EQlib")]
+    assert "librarian_balance_low" in [k for _s, k, _m in check_librarian(30.0, "EQlib")]
+    assert check_librarian(250.0, "EQlib") == []
+    assert "librarian_unreachable" in [k for _s, k, _m in check_librarian(None, "EQlib")]

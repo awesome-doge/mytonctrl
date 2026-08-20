@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import os
 import time
+import re
+import unicodedata
 from typing import TYPE_CHECKING, Any
 
-from mypylib.mypylib import bcolors, color_print, print_table
+from mypylib.mypylib import bcolors
 
 from mytoncore.lst import (
     CONTROLLER_STATES,
@@ -22,7 +24,9 @@ from mytoncore.lst import (
     check_controller_loan_readiness,
     check_controller_risks,
     check_loan_settings,
+    check_librarian,
     check_node_state,
+    check_payout_risks,
     check_pool_risks,
     controller_stake_readiness,
     conversion_rate,
@@ -45,6 +49,51 @@ SEVERITY_COLOR = {
     "warn": bcolors.yellow_text,
     "info": bcolors.blue_text,
 }
+
+
+# ── 寬度正確的排版 ────────────────────────────────────────────────
+# mypylib 的 print_table 用 len() 算欄寬，但 CJK 字元實際佔兩欄，
+# 只要表格裡有中文就一定歪掉。這裡自己算顯示寬度。
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _dw(text: Any) -> int:
+    """字串的顯示寬度（CJK 全形字算 2 欄，忽略 ANSI 色碼）。"""
+    plain = _ANSI.sub("", str(text))
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in plain)
+
+
+def _pad(text: Any, width: int) -> str:
+    return str(text) + " " * max(0, width - _dw(text))
+
+
+def _table(rows: list[list[Any]], indent: str = "  ") -> None:
+    """寬度正確的表格。第一列是表頭。"""
+    if not rows:
+        return
+    widths = [max(_dw(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for index, row in enumerate(rows):
+        cells = [_pad(cell, widths[i]) for i, cell in enumerate(row)]
+        line = indent + "  ".join(cells).rstrip()
+        print(bcolors.bold_text(bcolors.blue_text(line)) if index == 0 else line)
+
+
+def _kv(pairs: list[tuple[str, Any]], indent: str = "  ", columns: int = 2) -> None:
+    """key-value 區塊，每列放 columns 組，欄位對齊。"""
+    if not pairs:
+        return
+    key_width = max(_dw(k) for k, _ in pairs)
+    val_width = max(_dw(v) for _, v in pairs)
+    for start in range(0, len(pairs), columns):
+        chunk = pairs[start:start + columns]
+        parts = [f"{_pad(k, key_width)}  {_pad(v, val_width)}" for k, v in chunk]
+        print(indent + "    ".join(parts).rstrip())
+
+
+def _rule(title: str) -> None:
+    print()
+    print(bcolors.bold_text(bcolors.blue_text(f"▍{title}")))
 
 
 def _ton(value: Any, digits: int = 2) -> str:
@@ -185,6 +234,32 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         item["pending_withdraw"] = node_state["pending_withdraws"].get(addr)
         controllers.append(item)
 
+    # payout collection —— 位址只能從池子的 deposit/withdrawal_payout 動態取得
+    payouts: list[dict[str, Any]] = []
+    for pool in pools:
+        data = pool.get("data")
+        if not data:
+            continue
+        current_round_id = (data.get("current_round") or {}).get("round_id")
+        for field, kind in (("deposit_payout", "存款"), ("withdrawal_payout", "提款")):
+            addr = data.get(field)
+            if not addr:
+                continue
+            info = local.try_function(ton.GetPayoutCollectionData, args=[addr]) or {}
+            info.update({
+                "pool": pool["name"], "kind": kind, "addr": addr,
+                "is_stale": False,
+            })
+            payouts.append(info)
+            _ = current_round_id
+
+    # librarian 位址不在任何 get method 裡，需手動指定
+    librarian_addr = db.get("lst_librarian_addr")
+    librarian_balance = None
+    if librarian_addr:
+        account = local.try_function(ton.GetAccount, args=[librarian_addr])
+        librarian_balance = getattr(account, "balance", None)
+
     min_stake = None
     config17 = local.try_function(ton.get_config_17)
     if config17 is not None:
@@ -207,7 +282,11 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         "elections_open": elections_open,
         "settings": settings,
         "node_state": node_state,
-        "node_risks": check_node_state(node_state),
+        "node_risks": check_node_state(node_state)
+        + check_librarian(librarian_balance, librarian_addr),
+        "payouts": payouts,
+        "payout_risks": check_payout_risks(payouts),
+        "librarian": {"addr": librarian_addr, "balance": librarian_balance},
         "min_stake": min_stake,
         "pools": pools,
         "controllers": controllers,
@@ -219,186 +298,164 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
 
 def render(report: dict[str, Any]) -> None:
     pools: list[dict[str, Any]] = report["pools"]
+    settings: dict[str, Any] = report.get("settings") or {}
+    node_state: dict[str, Any] = report.get("node_state") or {}
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(report["timestamp"]))
+    print(bcolors.bold_text(f"LST 狀態 — {stamp}"))
 
-    color_print("{cyan}===[ LST 池子總覽 ]==={endc}")
-    table: list[list[Any]] = [[
-        "Pool", "Address", "TVL (TON)", "Supply", "Rate", "Interest", "Gov fee",
-        "帳戶餘額", "待提款", "Deposits", "Halted",
-    ]]
+    # ── 每個池子一個區塊。兩個池子欄位又多，橫排表格會擠成一團 ──
     for pool in pools:
-        label = pool["name"] + (" ←本機" if pool["is_local"] else "")
+        mark = "  ← 本機" if pool["is_local"] else ""
+        _rule(f"{pool['name']}  {pool['address']}{mark}")
         if "error" in pool:
-            table.append([label, _short(pool["address"]), "讀取失敗", "", "", "", "", "", "", "", ""])
+            print(f"  {bcolors.red_text('讀取失敗')}：{pool['error']}")
             continue
         data = pool["data"]
         rate = pool.get("rate")
-        table.append([
-            label,
-            _short(pool["address"]),
-            _ton(data.get("total_balance"), 0),
-            _ton(data.get("supply"), 0),
-            f"{rate:.6f}" if rate else "n/a",
-            f"{share_to_percent(data.get('interest_rate')) or 0:.4f}%",
-            f"{share_to_percent(data.get('governance_fee_share')) or 0:.4f}%",
-            f"{pool['pool_balance']:,.0f}" if isinstance(pool.get("pool_balance"), (int, float)) else "n/a",
-            _ton(data.get("requested_for_withdrawal"), 0),
-            _bool(data.get("deposits_open"), "open", "closed"),
-            _bool(not data.get("halted"), "no", "YES"),
+        balance = pool.get("pool_balance")
+        _kv([
+            ("TVL", f"{_ton(data.get('total_balance'), 0)} TON"),
+            ("帳戶餘額", f"{balance:,.2f} TON" if isinstance(balance, (int, float)) else "n/a"),
+            ("Supply", _ton(data.get("supply"), 0)),
+            ("待提款", f"{_ton(data.get('requested_for_withdrawal'), 0)} KTON"),
+            ("匯率", f"{rate:.6f}" if rate else "n/a"),
+            ("利率／輪", f"{share_to_percent(data.get('interest_rate')) or 0:.4f}%"),
+            ("治理費", f"{share_to_percent(data.get('governance_fee_share')) or 0:.4f}%"),
+            ("instant 提款費", f"{share_to_percent(data.get('instant_withdrawal_fee')) or 0:.6f}%"),
+            ("存款", _bool(data.get("deposits_open"), "開放", "關閉")),
+            ("樂觀存提", _bool(data.get("optimistic_deposit_withdrawals"), "開啟", "關閉")),
+            ("halted", _bool(not data.get("halted"), "否", "是")),
+            ("借款區間", f"{_ton(data.get('min_loan_per_validator'), 0)} ~ "
+                        f"{_ton(data.get('max_loan_per_validator'), 0)} TON"),
         ])
-    print_table(table)
-
-    print()
-    color_print("{cyan}===[ 借貸輪次 ]==={endc}")
-    rounds: list[list[Any]] = [[
-        "Pool", "Round", "Borrowers", "Borrowed", "Expected", "Returned", "Profit", "Deployed",
-    ]]
-    for pool in pools:
-        if "error" in pool:
-            continue
-        data = pool["data"]
+        rounds: list[list[Any]] = [["", "Round", "借款人", "借出", "預期", "已還", "損益", "部署率"]]
         total = data.get("total_balance") or 0
         for which, label in (("current_round", "本輪"), ("prev_round", "上輪")):
             rnd = data.get(which) or {}
-            profit = rnd.get("profit")
-            profit_text = _ton(profit) if isinstance(profit, int) else "n/a"
             borrowed = rnd.get("borrowed") or 0
             rounds.append([
-                f"{pool['name']} {label}",
-                rnd.get("round_id"),
-                rnd.get("active_borrowers"),
-                _ton(rnd.get("borrowed"), 0),
-                _ton(rnd.get("expected"), 0),
-                _ton(rnd.get("returned"), 0),
-                profit_text,
+                label, rnd.get("round_id"), rnd.get("active_borrowers"),
+                _ton(rnd.get("borrowed"), 0), _ton(rnd.get("expected"), 0),
+                _ton(rnd.get("returned"), 0), _ton(rnd.get("profit")),
                 f"{borrowed / total * 100:.1f}%" if total else "n/a",
             ])
-    print_table(rounds)
+        print()
+        _table(rounds)
 
+    # ── 本機 controller ──
     controllers: list[dict[str, Any]] = report["controllers"]
     if controllers:
-        print()
-        color_print("{cyan}===[ 本機 Controller ]==={endc}")
+        _rule("本機 Controller")
         ctable: list[list[Any]] = [[
-            "Address", "Status", "Balance", "State", "Approved", "Borrowed", "Interest", "Allocation",
+            "Address", "餘額", "狀態", "認可", "借款", "可參選", "原因",
         ]]
         for item in controllers:
             data = item.get("data") or {}
             state = data.get("state")
-            state_text = CONTROLLER_STATES.get(state, str(state)) if state is not None else "n/a"
             ctable.append([
-                _short(item["addr"], 12),
-                item.get("status") or "n/a",
-                f"{item['balance']:.2f}" if isinstance(item.get("balance"), (int, float)) else "n/a",
-                state_text,
+                _short(item["addr"], 10),
+                f"{item['balance']:,.2f}" if isinstance(item.get("balance"), (int, float)) else "n/a",
+                CONTROLLER_STATES.get(state, str(state)) if state is not None else "n/a",
                 _bool(data.get("approved")),
-                _ton(data.get("borrowed_amount")),
-                f"{share_to_percent(data.get('interest')) or 0:.4f}%",
-                _ton(data.get("allocation"), 0),
+                _ton(data.get("borrowed_amount"), 0),
+                "yes" if item.get("ready_to_stake") else "no",
+                item.get("ready_reason", ""),
             ])
-        print_table(ctable)
+        _table(ctable)
 
-    settings: dict[str, Any] = report.get("settings") or {}
-    local_pool_entry = next(
-        (p for p in report["pools"] if p["is_local"] and "data" in p), None
-    )
-    if settings and local_pool_entry is not None:
-        pool_data = local_pool_entry["data"]
-        print()
-        color_print("{cyan}===[ 借貸設定與可行性 ]==={endc}")
-        print(f"  本機池子：{local_pool_entry['name']}")
+        loans = [c for c in controllers if c.get("required_for_loan") is not None]
+        if loans:
+            print()
+            ltable: list[list[Any]] = [["Address", "自有資金", "借款所需", "差額", "elector 待領"]]
+            for item in loans:
+                available = item["validator_amount"]
+                required = item["required_for_loan"]
+                pending = item.get("elector_returned_stake")
+                ltable.append([
+                    _short(item["addr"], 10),
+                    f"{available:,.2f}", f"{required:,.2f}",
+                    f"{available - required:+,.2f}",
+                    f"{pending:,.2f}" if isinstance(pending, (int, float)) else "－",
+                ])
+            _table(ltable)
+
+    # ── 借貸設定（節點端，池子看不到）──
+    local_entry = next((p for p in pools if p["is_local"] and "data" in p), None)
+    if settings and local_entry is not None:
+        pool_data = local_entry["data"]
+        _rule(f"借貸設定（節點端）vs {local_entry['name']} 池子限制")
         pool_rate = share_to_percent(pool_data.get("interest_rate")) or 0.0
-        stable: list[list[Any]] = [["項目", "節點設定", "池子限制", "說明"]]
-        stable.append([
-            "最低借款",
-            f"{settings['min_loan']:,} TON",
-            _ton(pool_data.get("min_loan_per_validator"), 0) + " TON",
-            "節點低於池子下限會被 clamp",
+        _table([
+            ["項目", "節點設定", "池子限制"],
+            ["最低借款", f"{settings['min_loan']:,} TON",
+             f"{_ton(pool_data.get('min_loan_per_validator'), 0)} TON"],
+            ["最高借款", f"{settings['max_loan']:,} TON",
+             f"{_ton(pool_data.get('max_loan_per_validator'), 0)} TON"],
+            ["可付利率上限", f"{settings['max_interest_percent']}%", f"{pool_rate:.4f}%（要價）"],
         ])
-        stable.append([
-            "最高借款",
-            f"{settings['max_loan']:,} TON",
-            _ton(pool_data.get("max_loan_per_validator"), 0) + " TON",
-            "取兩者較小值",
-        ])
-        stable.append([
-            "可付利率上限",
-            f"{settings['max_interest_percent']}%",
-            f"{pool_rate:.4f}%（池子要價）",
-            "節點低於池子要價則借款被拒",
-        ])
-        print_table(stable)
-
-        loan_amount = local_pool_entry.get("loan_amount")
+        loan_amount = local_entry.get("loan_amount")
         if loan_amount is None:
             loan_text = "試算失敗"
         elif loan_amount == -1:
-            loan_text = "池子拒絕放貸（-1）"
+            loan_text = bcolors.yellow_text("池子拒絕放貸（-1）")
         else:
             loan_text = f"{loan_amount / NANO:,.0f} TON"
-        print(f"  依上述設定的本輪可貸額度：{loan_text}")
-        print(
-            "  ※ calculate_loan_amount 的時間判斷方向與 recv_internal 相反"
-            "（pool.func:864 vs :396），credit_start_prior_elections_end 非 0 時不可盡信"
-        )
         min_stake = report.get("min_stake")
-        if min_stake:
-            print(f"  網路最低質押（config17）：{min_stake:,.0f} TON")
-
-    controllers_loan = [
-        c for c in report["controllers"] if c.get("required_for_loan") is not None
-    ]
-    if controllers_loan:
         print()
-        color_print("{cyan}===[ Controller 借款所需資金 ]==={endc}")
-        ltable: list[list[Any]] = [["Address", "自有資金", "借款所需", "差額"]]
-        for item in controllers_loan:
-            available = item["validator_amount"]
-            required = item["required_for_loan"]
-            ltable.append([
-                _short(item["addr"], 12),
-                f"{available:,.2f}",
-                f"{required:,.2f}",
-                f"{available - required:+,.2f}",
-            ])
-        print_table(ltable)
+        _kv([
+            ("本輪可貸額度", loan_text),
+            ("網路最低質押", f"{min_stake:,.0f} TON" if min_stake else "n/a"),
+        ], columns=1)
+        print("  ※ calculate_loan_amount 的時間判斷方向與 recv_internal 相反"
+              "（pool.func:864 vs :396），credit_start 非 0 時不可盡信")
 
-    node_state: dict[str, Any] = report.get("node_state") or {}
+    # ── 節點端狀態 ──
     if node_state:
-        print()
-        color_print("{cyan}===[ 節點端狀態（mytoncore.db，鏈上查不到）]==={endc}")
-        ntable: list[list[Any]] = [["項目", "值"]]
-        ntable.append(["liquid-staking 模式", _bool(node_state.get("liquid_staking_enabled"), "啟用", "停用")])
-        ntable.append(["onlyNode", _bool(not node_state.get("only_node"), "否", "是（LST 停擺）")])
-        for key in NODE_STATE_KEYS:
-            values = node_state.get(key) or []
-            ntable.append([key, f"{len(values)} 個" if values else "（空）"])
-        pending = node_state.get("pending_withdraws") or {}
-        ntable.append(["controllerPendingWithdraws", f"{len(pending)} 筆" if pending else "（無）"])
-        ntable.append(["stake 設定", node_state.get("stake") if node_state.get("stake") is not None else "（未設定，LST 用 balance-50）"])
+        _rule("節點端狀態（mytoncore.db，鏈上查不到）")
         backup_age = node_state.get("backup_age_sec")
-        ntable.append([
-            "db backup 年齡",
-            f"{backup_age / 3600:.1f} 小時" if isinstance(backup_age, (int, float)) else "n/a",
+        pending = node_state.get("pending_withdraws") or {}
+        _kv([
+            ("liquid-staking", _bool(node_state.get("liquid_staking_enabled"), "啟用", "停用")),
+            ("onlyNode", _bool(not node_state.get("only_node"), "否", "是（LST 停擺）")),
+            ("using_controllers", f"{len(node_state.get('using_controllers') or [])} 個"),
+            ("old_controllers", f"{len(node_state.get('old_controllers') or [])} 個"),
+            ("user_controllers", f"{len(node_state.get('user_controllers') or [])} 個"),
+            ("stop_controllers", f"{len(node_state.get('stop_controllers_list') or [])} 個"),
+            ("排隊中提款", f"{len(pending)} 筆" if pending else "無"),
+            ("db backup 年齡", f"{backup_age / 3600:.1f} 小時"
+             if isinstance(backup_age, (int, float)) else "n/a"),
         ])
-        print_table(ntable)
 
-    ready_rows = [c for c in report["controllers"] if c.get("ready_reason")]
-    if ready_rows:
-        print()
-        color_print("{cyan}===[ Controller 參選就緒判定 ]==={endc}")
-        rtable: list[list[Any]] = [["Address", "可參選", "原因", "排隊提款"]]
-        for item in ready_rows:
-            pw = item.get("pending_withdraw")
-            rtable.append([
-                _short(item["addr"], 12),
-                "yes" if item.get("ready_to_stake") else "no",
-                item.get("ready_reason", ""),
-                f"{pw}" if pw is not None else "－",
-            ])
-        print_table(rtable)
+    payouts: list[dict[str, Any]] = report.get("payouts") or []
+    librarian: dict[str, Any] = report.get("librarian") or {}
+    if payouts or librarian.get("addr"):
+        _rule("Payout 分配與 Librarian")
+        if payouts:
+            ptable: list[list[Any]] = [["Pool", "類型", "Address", "分配", "未燒毀 bill", "額度"]]
+            for item in payouts:
+                dist = item.get("distribution") or {}
+                ptable.append([
+                    item.get("pool", "?"), item.get("kind", "?"),
+                    _short(item.get("addr"), 10),
+                    "已開始" if dist.get("started") else ("未開始" if dist else "讀不到"),
+                    item.get("issued_bills") if item.get("issued_bills") is not None else "n/a",
+                    _ton(dist.get("volume"), 2) if dist.get("volume") is not None else "n/a",
+                ])
+            _table(ptable)
+        else:
+            print("  本輪沒有進行中的 payout collection")
+        if librarian.get("addr"):
+            balance = librarian.get("balance")
+            print()
+            _kv([
+                ("librarian", _short(librarian["addr"], 12)),
+                ("餘額", f"{balance:,.2f} TON" if isinstance(balance, (int, float)) else "n/a"),
+            ], columns=1)
+        else:
+            print("  librarian 未設定（set lst_librarian_addr <位址> 後可監控其餘額）")
 
-    print()
-    color_print("{cyan}===[ 風險檢查 ]==={endc}")
+    # ── 風險 ──
+    _rule("風險檢查")
     findings: list[tuple[str, str, str, str]] = []
     for pool in pools:
         if "error" in pool:
@@ -407,26 +464,29 @@ def render(report: dict[str, Any]) -> None:
         for severity, key, message in pool["risks"]:
             findings.append((severity, pool["name"], key, message))
     for severity, key, message in report.get("node_risks", []):
-        findings.append((severity, "節點設定", key, message))
+        findings.append((severity, "節點", key, message))
+    for severity, key, message in report.get("payout_risks", []):
+        findings.append((severity, "payout", key, message))
     for severity, key, message in report.get("loan_risks", []):
         findings.append((severity, "借貸設定", key, message))
     for severity, key, message in report["controller_risks"]:
         findings.append((severity, "controller", key, message))
 
     if not findings:
-        color_print("  {green}沒有偵測到問題{endc}")
+        print(f"  {bcolors.green_text('沒有偵測到問題')}")
         return
 
     order = {"crit": 0, "warn": 1, "info": 2}
     findings.sort(key=lambda item: order.get(item[0], 3))
+    scope_width = max(_dw(f[1]) for f in findings)
     for severity, scope, _key, message in findings:
-        tag = severity.upper().ljust(4)
         colorize = SEVERITY_COLOR.get(severity, bcolors.blue_text)
-        print(f"  [{colorize(tag)}] {scope}: {message}")
+        tag = colorize(severity.upper().ljust(4))
+        print(f"  [{tag}] {_pad(scope, scope_width)}  {message}")
 
     counts = {level: sum(1 for f in findings if f[0] == level) for level in ("crit", "warn", "info")}
     print()
-    summary = f"  嚴重 {counts['crit']} / 警告 {counts['warn']} / 提示 {counts['info']}"
+    summary = f"  嚴重 {counts['crit']}　警告 {counts['warn']}　提示 {counts['info']}"
     print(bcolors.red_text(summary) if counts["crit"] else bcolors.yellow_text(summary))
 
 

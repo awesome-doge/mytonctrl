@@ -737,3 +737,85 @@ def check_node_state(state: dict[str, Any]) -> list[tuple[str, str, str]]:
         ))
 
     return out
+
+
+# ── Payout NFT collection ────────────────────────────────────────
+# 每個 round 會部署一對 payout collection（存款側與提款側），位址含
+# random_seed 因此無法離線推算，只能從 pool 的 deposit_payout /
+# withdrawal_payout 欄位動態取得（address_calculations.func:74-77）。
+#
+# 分配是一條 burn 鏈：從最新的 NFT 開始，每個 item 用 0.01 TON 通知下一個
+# （nft-item.func:153-158）。任一 item 的餘額不足就整條鏈停住，
+# 其後的持有者永遠拿不到錢，而且鏈上沒有任何錯誤。
+
+PAYOUT_MIN_ITEM_TON = 0.1   # min_tons_for_storage(0.09) + burn_notification(0.01)
+
+
+def check_payout_risks(payouts: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """payouts 每項需含 pool / kind / addr / distribution / issued_bills / round_id。
+
+    distribution 為 None 代表 collection 收不到 payout::init
+    （nft-collection.func:126 的 error 67），所有操作都會癱瘓。
+    """
+    out: list[tuple[str, str, str]] = []
+    for item in payouts:
+        pool = item.get("pool", "?")
+        kind = item.get("kind", "payout")
+        addr = str(item.get("addr", ""))
+        short = f"{addr[:10]}…" if addr else "?"
+
+        if item.get("distribution") is None:
+            out.append((
+                "crit", "payout_not_initialized",
+                f"{pool} 的 {kind} collection {short} 讀不到 distribution —— "
+                "可能未收到 payout::init（gas 不足），所有 mint 與分配都會失敗",
+            ))
+            continue
+
+        started = item["distribution"].get("started")
+        issued = _to_int(item.get("issued_bills"))
+        if started and isinstance(issued, int) and issued > 0:
+            out.append((
+                "warn", "payout_distribution_stalled",
+                f"{pool} 的 {kind} collection {short} 分配已開始但仍有 {issued} 張 bill 未燒毀 —— "
+                "若數字停滯不動代表 burn 鏈斷裂，其後的持有者拿不到錢",
+            ))
+
+        if item.get("is_stale"):
+            out.append((
+                "warn", "payout_stale_round",
+                f"{pool} 的 {kind} collection {short} 屬於較舊的 round —— 分配可能沒有完成",
+            ))
+    return out
+
+
+# ── Librarian ────────────────────────────────────────────────────
+# librarian 發布 public library；餘額歸零 → masterchain 帳戶被凍結 →
+# library 失效 → 以 library ref 部署的 controller / pool 無法執行。
+# 這是全系統唯一的單點失效，而且無法自救（librarian.func:115-127）。
+# 位址不在任何 get method 裡，需要用 set lst_librarian_addr 手動指定。
+
+LIBRARIAN_WARN_TON = 50.0
+LIBRARIAN_CRIT_TON = 10.0
+
+
+def check_librarian(balance: float | None, addr: str | None) -> list[tuple[str, str, str]]:
+    if addr is None:
+        return []
+    if balance is None:
+        return [(
+            "warn", "librarian_unreachable",
+            f"讀不到 librarian {addr[:10]}… 的餘額",
+        )]
+    if balance < LIBRARIAN_CRIT_TON:
+        return [(
+            "crit", "librarian_balance_critical",
+            f"librarian 餘額僅 {balance:,.2f} TON —— 耗盡後 public library 失效，"
+            "以 library 部署的 controller/pool 將無法執行且無法自救",
+        )]
+    if balance < LIBRARIAN_WARN_TON:
+        return [(
+            "warn", "librarian_balance_low",
+            f"librarian 餘額 {balance:,.2f} TON 偏低（建議充值水位 250 TON）",
+        )]
+    return []

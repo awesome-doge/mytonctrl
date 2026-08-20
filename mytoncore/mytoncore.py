@@ -2563,6 +2563,30 @@ class MyTonCore:
 			self.local.add_log(f"GetPoolProjectedHalted: {ex}", "debug")
 			return None
 
+	def GetPayoutCollectionData(self, addr: str) -> dict:
+		"""讀 payout NFT collection 的分配狀態。
+
+		distribution 為 None 代表 collection 沒收到 payout::init，
+		所有 mint 與分配都會拋 error 67（nft-collection.func:126）。
+		"""
+		out = {"addr": addr, "distribution": None, "issued_bills": None}
+		try:
+			stack = self.run_get_method(addr, "get_distribution_data")
+			# (started, jettons, volume, [jetton_wallet])
+			out["distribution"] = {
+				"started": bool(int(stack[0])) if len(stack) > 0 else None,
+				"is_jetton": bool(int(stack[1])) if len(stack) > 1 else None,
+				"volume": int(stack[2]) if len(stack) > 2 else None,
+			}
+		except Exception as ex:
+			self.local.add_log(f"GetPayoutCollectionData distribution {addr}: {ex}", "debug")
+		try:
+			stack = self.run_get_method(addr, "get_issued_bills")
+			out["issued_bills"] = int(stack[0])
+		except Exception as ex:
+			self.local.add_log(f"GetPayoutCollectionData bills {addr}: {ex}", "debug")
+		return out
+
 	def CreateLoanRequest(self, controllerAddr):
 		self.local.add_log("start CreateLoanRequest function", "debug")
 		min_loan = self.local.db.get("min_loan", 41000)
