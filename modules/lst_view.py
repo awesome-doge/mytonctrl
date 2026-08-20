@@ -428,31 +428,31 @@ def render(report: dict[str, Any]) -> None:
 
     payouts: list[dict[str, Any]] = report.get("payouts") or []
     librarian: dict[str, Any] = report.get("librarian") or {}
-    if payouts or librarian.get("addr"):
-        _rule("Payout 分配與 Librarian")
-        if payouts:
-            ptable: list[list[Any]] = [["Pool", "類型", "Address", "分配", "未燒毀 bill", "額度"]]
-            for item in payouts:
-                dist = item.get("distribution") or {}
-                ptable.append([
-                    item.get("pool", "?"), item.get("kind", "?"),
-                    _short(item.get("addr"), 10),
-                    "已開始" if dist.get("started") else ("未開始" if dist else "讀不到"),
-                    item.get("issued_bills") if item.get("issued_bills") is not None else "n/a",
-                    _ton(dist.get("volume"), 2) if dist.get("volume") is not None else "n/a",
-                ])
-            _table(ptable)
-        else:
-            print("  本輪沒有進行中的 payout collection")
-        if librarian.get("addr"):
-            balance = librarian.get("balance")
-            print()
-            _kv([
-                ("librarian", _short(librarian["addr"], 12)),
-                ("餘額", f"{balance:,.2f} TON" if isinstance(balance, (int, float)) else "n/a"),
-            ], columns=1)
-        else:
-            print("  librarian 未設定（set lst_librarian_addr <位址> 後可監控其餘額）")
+    # 一律顯示，讓「目前沒有進行中的分配」也是可見的結論
+    _rule("Payout 分配與 Librarian")
+    if payouts:
+        ptable: list[list[Any]] = [["Pool", "類型", "Address", "分配", "未燒毀 bill", "額度"]]
+        for item in payouts:
+            dist = item.get("distribution") or {}
+            ptable.append([
+                item.get("pool", "?"), item.get("kind", "?"),
+                _short(item.get("addr"), 10),
+                "已開始" if dist.get("started") else ("未開始" if dist else "讀不到"),
+                item.get("issued_bills") if item.get("issued_bills") is not None else "n/a",
+                _ton(dist.get("volume"), 2) if dist.get("volume") is not None else "n/a",
+            ])
+        _table(ptable)
+    else:
+        print("  本輪沒有進行中的 payout collection")
+    if librarian.get("addr"):
+        balance = librarian.get("balance")
+        print()
+        _kv([
+            ("librarian", _short(librarian["addr"], 12)),
+            ("餘額", f"{balance:,.2f} TON" if isinstance(balance, (int, float)) else "n/a"),
+        ], columns=1)
+    else:
+        print("  librarian 未設定（set lst_librarian_addr <位址> 後可監控其餘額）")
 
     # ── 風險 ──
     _rule("風險檢查")
