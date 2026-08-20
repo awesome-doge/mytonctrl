@@ -169,6 +169,28 @@ def init_alerts():
             "Node initial sync has been completed",
             0
         ),
+        # ── liquid staking（KTON / pKTON）──────────────────────────
+        # 判準與訊息由 mytoncore/lst.py 的 check_pool_risks / check_controller_risks 產生，
+        # 這裡只負責定義嚴重度與重送間隔。新增判準時不必動這裡，
+        # 除非要為它單獨設定不同的 timeout。
+        "lst_crit": Alert(
+            "critical",
+            "Liquid staking pool or controller is in a critical state",
+            "{message}",
+            6 * HOUR
+        ),
+        "lst_crit_ok": Alert(
+            "info",
+            "Liquid staking critical condition cleared",
+            "{message}",
+            HOUR
+        ),
+        "lst_warn": Alert(
+            "medium",
+            "Liquid staking pool or controller needs attention",
+            "{message}",
+            24 * HOUR
+        ),
     }
 
 
@@ -564,6 +586,38 @@ Full bot documentation <a href="https://docs.ton.org/v3/guidelines/nodes/mainten
             self.initial_sync = False
             self.send_alert("initial_sync_completed")
 
+    def check_lst(self):
+        """liquid staking 池與 controller 的健康檢查。
+
+        判準集中在 mytoncore/lst.py，本方法只負責把結果轉成告警。
+        crit 會在恢復時送出 lst_crit_ok。
+        """
+        if not self.ton.using_liquid_staking():
+            return
+        from modules.lst_view import collect
+
+        report = collect(self.ton, self.local)
+        findings = []
+        for pool in report["pools"]:
+            name = pool["name"]
+            if "error" in pool:
+                findings.append(("crit", f"{name}: 讀不到池子狀態 — {pool['error']}"))
+                continue
+            for severity, _key, message in pool["risks"]:
+                findings.append((severity, f"{name}: {message}"))
+        for severity, _key, message in report["controller_risks"]:
+            findings.append((severity, f"controller: {message}"))
+
+        crit = [msg for severity, msg in findings if severity == "crit"]
+        warn = [msg for severity, msg in findings if severity == "warn"]
+
+        if crit:
+            self.send_alert("lst_crit", message="\n".join(crit))
+        elif self.get_alert_sent("lst_crit"):
+            self.send_alert("lst_crit_ok", message="liquid staking 的嚴重問題已解除")
+        if warn:
+            self.send_alert("lst_warn", message="\n".join(warn))
+
     def check_status(self):
         if not self.ton.using_alert_bot():
             return
@@ -583,6 +637,7 @@ Full bot documentation <a href="https://docs.ton.org/v3/guidelines/nodes/mainten
         self.local.try_function(self.check_stake_returned)
         self.local.try_function(self.check_voting)
         self.local.try_function(self.check_initial_sync)
+        self.local.try_function(self.check_lst)
 
     def add_console_commands(self, console):
         add_command(self.local, console, "enable_alert", self.enable_alert)

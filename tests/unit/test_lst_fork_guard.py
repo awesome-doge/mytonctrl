@@ -115,3 +115,156 @@ def test_stake_branches_are_exclusive():
     assert "elif stake is None and useController" in src, (
         "stake 計算的 elif 修改遺失（原本是連續 if）"
     )
+
+
+# ── 池子端（mytoncore/lst.py）──────────────────────────────────────
+# 欄位順序的唯一來源是 KTON-IO/liquid-staking-contract
+# contracts/pool.func:772-813 compose_pool_full_data_internal()
+# （已與 wrappers/Pool.ts:710,831 交叉驗證）
+
+CONTRACT_POOL_ORDER = [
+    "state", "halted", "total_balance", "interest_rate",
+    "optimistic_deposit_withdrawals", "deposits_open", "instant_withdrawal_fee",
+    "saved_validator_set_hash", "prev_round", "current_round",
+    "min_loan_per_validator", "max_loan_per_validator",
+    "governance_fee_share", "accrued_governance_fee",
+    "disbalance_tolerance", "credit_start_prior_elections_end",
+    "jetton_minter", "supply",
+    "deposit_payout", "requested_for_deposit",
+    "withdrawal_payout", "requested_for_withdrawal",
+    "sudoer", "sudoer_set_at", "governor", "governor_update_after",
+    "interest_manager", "halter", "approver",
+    "controller_code", "pool_jetton_wallet_code", "payout_minter_code",
+    "projected_total_balance", "projected_pool_supply",
+]
+
+
+def test_pool_field_order_matches_contract():
+    from mytoncore.lst import POOL_FIELDS_V2
+
+    assert POOL_FIELDS_V2 == CONTRACT_POOL_ORDER, (
+        "mytoncore/lst.py 的池子欄位表與合約 compose_pool_full_data_internal() 不一致"
+    )
+
+
+def _pool_stack(**overrides):
+    """造一份 34 項的合成 stack，數值即索引，方便驗證對位。"""
+    stack = list(range(34))
+    stack[8] = "[() 100 0 0 0 0 0]"     # prev_round
+    stack[9] = "[() 101 0 0 0 0 0]"     # current_round
+    for name, value in overrides.items():
+        stack[CONTRACT_POOL_ORDER.index(name)] = value
+    return stack
+
+
+def test_pool_parse_maps_every_field_by_position():
+    from mytoncore.lst import parse_pool_full_data
+
+    data = parse_pool_full_data(_pool_stack())
+    for index, name in enumerate(CONTRACT_POOL_ORDER):
+        if name in ("prev_round", "current_round"):
+            continue
+        if name in ("jetton_minter", "deposit_payout", "withdrawal_payout", "sudoer",
+                    "governor", "interest_manager", "halter", "approver"):
+            continue  # 位址欄位是 slice，合成資料不驗
+        if name in ("controller_code", "pool_jetton_wallet_code", "payout_minter_code"):
+            continue
+        assert data[name] == index, f"{name} 對到索引 {data[name]}，應為 {index}"
+
+
+def test_pool_parse_round_tuple():
+    from mytoncore.lst import parse_pool_full_data
+
+    data = parse_pool_full_data(
+        _pool_stack(prev_round="[C{AB} 507 1 2031393942726336 2032551593524084 0 -5]")
+    )
+    prev = data["prev_round"]
+    assert prev["round_id"] == 507
+    assert prev["active_borrowers"] == 1
+    assert prev["borrowed"] == 2031393942726336
+    assert prev["profit"] == -5, "profit 是有號數，負值代表罰沒"
+
+
+def test_pool_parse_legacy_30_field_layout():
+    """舊版 layout 少四個欄位，必須補預設值而不是整排錯位。"""
+    from mytoncore.lst import POOL_V1_ABSENT_AT, parse_pool_full_data
+
+    full = _pool_stack()
+    legacy = [v for i, v in enumerate(full)
+              if CONTRACT_POOL_ORDER[i] not in POOL_V1_ABSENT_AT]
+    assert len(legacy) == 30
+    data = parse_pool_full_data(legacy)
+    assert data["instant_withdrawal_fee"] == 0
+    assert data["disbalance_tolerance"] == 30
+    # 補值之後，其後的欄位仍要對得上名稱（不是位移）
+    assert data["supply"] == full[CONTRACT_POOL_ORDER.index("supply")]
+
+
+def test_pool_parse_rejects_unexpected_length():
+    from mytoncore.lst import parse_pool_full_data
+
+    with pytest.raises(ValueError):
+        parse_pool_full_data([0, 1, 2])
+
+
+def test_slice_to_addr_decodes_masterchain_and_basechain():
+    from mytoncore.lst import slice_to_addr
+
+    # 實際從鏈上取得的 pKTON pool jetton_minter（wc 0）
+    minter = ("CS{Cell{00538015a1fd5797916a4c3efba76f4edbfd03938b49e452e0d8fb689a913"
+              "21bbfbdb0ae1f4f4f4aec693040} bits: 0..267; refs: 0..0}")
+    assert slice_to_addr(minter) == "EQCtD-q8vItSYffdO3p23-gcnFpPIpcGx9tE1ImQ3f3thV4l"
+    assert slice_to_addr("()") is None
+    assert slice_to_addr(None) is None
+
+
+def test_instant_withdrawal_fee_is_flagged():
+    """本 fork 存在的理由之一：把會銷毀使用者本金的設定變成可見。"""
+    from mytoncore.lst import SHARE_BASIS, check_pool_risks
+
+    data = {
+        "instant_withdrawal_fee": SHARE_BASIS - 1,
+        "optimistic_deposit_withdrawals": -1,
+        "supply": 1, "total_balance": 1,
+    }
+    keys = [key for _sev, key, _msg in check_pool_risks(data)]
+    assert "instant_withdrawal_fee" in keys
+
+    data["optimistic_deposit_withdrawals"] = 0
+    keys = [key for _sev, key, _msg in check_pool_risks(data)]
+    assert "instant_withdrawal_fee" not in keys, "optimistic 關閉時不應告警"
+
+
+def test_projected_halt_divergence_is_critical():
+    """pool.func:678-688 —— raw 看不到、帶 update_round 才會出現的 halt。"""
+    from mytoncore.lst import check_pool_risks
+
+    data = {"halted": 0, "supply": 1, "total_balance": 1}
+    found = [(sev, key) for sev, key, _ in check_pool_risks(data, projected_halted=True)]
+    assert ("crit", "pool_cannot_cover_withdrawals") in found
+
+
+def test_governor_no_timestamp_sentinel_is_not_an_alert():
+    """governor_update_after = 2^48-1 代表沒有排定變更，不是隔離期。"""
+    from mytoncore.lst import NO_TIMESTAMP, check_pool_risks
+
+    data = {"governor_update_after": NO_TIMESTAMP, "supply": 1, "total_balance": 1}
+    keys = [key for _sev, key, _msg in check_pool_risks(data, now=1_800_000_000)]
+    assert "governor_quarantine" not in keys
+
+
+def test_controller_insolvent_is_critical():
+    from mytoncore.lst import check_controller_risks
+
+    found = check_controller_risks([
+        {"addr": "Ef_test", "balance": 100.0, "data": {"state": 5, "approved": -1}},
+    ])
+    assert ("crit", "controller_insolvent") in [(sev, key) for sev, key, _ in found]
+
+
+def test_lst_command_registered():
+    from modules.controller import ControllerModule
+
+    assert hasattr(ControllerModule, "lst_status")
+    src = inspect.getsource(ControllerModule.add_console_commands)
+    assert '"lst"' in src, "lst 指令沒有註冊到 console"
