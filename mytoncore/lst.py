@@ -345,3 +345,118 @@ def check_controller_risks(
                 f"{ENSURABLE_BALANCE_FOR_STAKING} TON",
             ))
     return out
+
+
+# ── 節點端借貸設定 ────────────────────────────────────────────────
+# 這一段是「只有 mytonctrl 才知道」的部分：池子的 get method 看不到
+# 這台節點打算借多少、願意付多少利息。設定與池子條件不匹配時，
+# 借款會被靜默拒絕（calculate_loan_amount 回 -1，沒有任何錯誤訊息）。
+
+# mytoncore.py CreateLoanRequest 用的預設值（與 modules/__init__.py 的
+# Setting 預設值不一致，這是上游既有的缺陷，此處以實際生效的為準）
+LOAN_SETTING_DEFAULTS = {
+    "min_loan": 41000,
+    "max_loan": 43000,
+    "max_interest_percent": 1.5,
+}
+
+
+def percent_to_share(percent: float) -> int:
+    """百分比 → uint24 定點，與 CreateLoanRequest 的換算一致。"""
+    return int(percent / 100 * SHARE_BASIS)
+
+
+def check_loan_settings(
+    settings: dict[str, Any],
+    pool: dict[str, Any],
+    *,
+    loan_amount: int | None = None,
+    min_stake: float | None = None,
+    elections_open: bool = False,
+) -> list[tuple[str, str, str]]:
+    """比對節點端借貸設定與池子/網路的條件。
+
+    可貸額度相關的判準只在選舉開放時才有意義 —— 輪次進行中池子沒有
+    閒置資金是正常狀態，那時候告警只會變成永久噪音。
+    """
+    out: list[tuple[str, str, str]] = []
+
+    min_loan = settings.get("min_loan")
+    max_loan = settings.get("max_loan")
+    max_interest_percent = settings.get("max_interest_percent")
+
+    pool_min = pool.get("min_loan_per_validator")
+    pool_max = pool.get("max_loan_per_validator")
+    pool_rate = pool.get("interest_rate")
+
+    # pool.func:858 —— 願付利率低於池子要價，借款永遠被拒且沒有錯誤訊息
+    if isinstance(max_interest_percent, (int, float)) and isinstance(pool_rate, int):
+        if percent_to_share(float(max_interest_percent)) < pool_rate:
+            pool_percent = share_to_percent(pool_rate) or 0.0
+            out.append((
+                "crit", "interest_below_pool_rate",
+                f"max_interest_percent {max_interest_percent}% 低於池子要價 "
+                f"{pool_percent:.4f}% —— 借款會被靜默拒絕",
+            ))
+
+    # pool.func:878-884 —— clamp 之後區間為空就借不到
+    if isinstance(max_loan, (int, float)) and isinstance(pool_min, int):
+        if max_loan * NANO < pool_min:
+            out.append((
+                "crit", "max_loan_below_pool_min",
+                f"max_loan {max_loan:,} TON 低於池子的最低借款 "
+                f"{pool_min / NANO:,.0f} TON —— 借款會被拒絕",
+            ))
+    if isinstance(min_loan, (int, float)) and isinstance(pool_max, int):
+        if min_loan * NANO > pool_max:
+            out.append((
+                "crit", "min_loan_above_pool_max",
+                f"min_loan {min_loan:,} TON 高於池子的最高借款 "
+                f"{pool_max / NANO:,.0f} TON —— 借款會被拒絕",
+            ))
+    if (
+        isinstance(min_loan, (int, float))
+        and isinstance(max_loan, (int, float))
+        and min_loan > max_loan
+    ):
+        out.append((
+            "crit", "min_loan_above_max_loan",
+            f"min_loan {min_loan:,} 大於 max_loan {max_loan:,} —— 設定本身矛盾",
+        ))
+
+    # 借到的錢要能達到網路最低質押，否則選舉會被 elector 拒絕。
+    # 只在選舉開放時檢查：輪次中池子資金已部署出去，可貸額度本來就低。
+    if elections_open and loan_amount is not None and loan_amount > 0 and min_stake:
+        if loan_amount / NANO < min_stake:
+            out.append((
+                "warn", "loan_below_network_min_stake",
+                f"本輪可貸 {loan_amount / NANO:,.0f} TON 低於網路最低質押 "
+                f"{min_stake:,.0f} TON —— 即使借到也無法參選",
+            ))
+
+    return out
+
+
+def check_controller_loan_readiness(
+    controllers: list[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """controller 自有資金是否足以支撐借款。
+
+    每項需含 addr / balance(TON) / required_for_loan(TON) / validator_amount(TON)。
+    required_for_loan 來自 controller.func:667 required_balance_for_loan。
+    """
+    out: list[tuple[str, str, str]] = []
+    for item in controllers:
+        required = item.get("required_for_loan")
+        available = item.get("validator_amount")
+        if not isinstance(required, (int, float)) or not isinstance(available, (int, float)):
+            continue
+        addr = str(item.get("addr", ""))
+        short = f"{addr[:8]}…" if addr else "?"
+        if available < required:
+            out.append((
+                "warn", "controller_insufficient_for_loan",
+                f"controller {short} 自有資金 {available:,.2f} TON 不足以支撐借款，"
+                f"需要 {required:,.2f} TON（差 {required - available:,.2f}）",
+            ))
+    return out

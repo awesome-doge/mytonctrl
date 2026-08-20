@@ -268,3 +268,75 @@ def test_lst_command_registered():
     assert hasattr(ControllerModule, "lst_status")
     src = inspect.getsource(ControllerModule.add_console_commands)
     assert '"lst"' in src, "lst 指令沒有註冊到 console"
+
+
+# ── 節點端借貸設定 ────────────────────────────────────────────────
+
+def test_interest_below_pool_rate_is_critical():
+    """pool.func:858 —— 願付利率低於池子要價，借款永遠被拒且沒有錯誤訊息。"""
+    from mytoncore.lst import check_loan_settings, percent_to_share
+
+    pool = {"interest_rate": percent_to_share(0.5), "min_loan_per_validator": 0,
+            "max_loan_per_validator": 10**18}
+    settings = {"min_loan": 1, "max_loan": 1000, "max_interest_percent": 0.1}
+    keys = [key for _sev, key, _msg in check_loan_settings(settings, pool)]
+    assert "interest_below_pool_rate" in keys
+
+    settings["max_interest_percent"] = 1.0
+    keys = [key for _sev, key, _msg in check_loan_settings(settings, pool)]
+    assert "interest_below_pool_rate" not in keys
+
+
+def test_loan_range_incompatible_with_pool():
+    from mytoncore.lst import NANO, check_loan_settings
+
+    pool = {"interest_rate": 0, "min_loan_per_validator": 5000 * NANO,
+            "max_loan_per_validator": 9000 * NANO}
+    keys = [k for _s, k, _m in check_loan_settings(
+        {"min_loan": 1, "max_loan": 100, "max_interest_percent": 10}, pool)]
+    assert "max_loan_below_pool_min" in keys
+
+    keys = [k for _s, k, _m in check_loan_settings(
+        {"min_loan": 50000, "max_loan": 60000, "max_interest_percent": 10}, pool)]
+    assert "min_loan_above_pool_max" in keys
+
+    keys = [k for _s, k, _m in check_loan_settings(
+        {"min_loan": 8000, "max_loan": 6000, "max_interest_percent": 10}, pool)]
+    assert "min_loan_above_max_loan" in keys
+
+
+def test_loan_capacity_warning_only_during_elections():
+    """輪次進行中池子沒有閒置資金是正常的，那時候告警只會是噪音。"""
+    from mytoncore.lst import NANO, check_loan_settings
+
+    pool = {"interest_rate": 0, "min_loan_per_validator": 0,
+            "max_loan_per_validator": 10**18}
+    settings = {"min_loan": 1, "max_loan": 10**6, "max_interest_percent": 10}
+
+    keys = [k for _s, k, _m in check_loan_settings(
+        settings, pool, loan_amount=2 * NANO, min_stake=300000.0, elections_open=False)]
+    assert "loan_below_network_min_stake" not in keys
+
+    keys = [k for _s, k, _m in check_loan_settings(
+        settings, pool, loan_amount=2 * NANO, min_stake=300000.0, elections_open=True)]
+    assert "loan_below_network_min_stake" in keys
+
+
+def test_controller_loan_readiness():
+    from mytoncore.lst import check_controller_loan_readiness
+
+    found = check_controller_loan_readiness([
+        {"addr": "Ef_poor", "required_for_loan": 2150.0, "validator_amount": 10.8},
+        {"addr": "Ef_rich", "required_for_loan": 2150.0, "validator_amount": 5000.0},
+    ])
+    keys = [(sev, key) for sev, key, _msg in found]
+    assert ("warn", "controller_insufficient_for_loan") in keys
+    assert len(found) == 1, "資金充足的 controller 不該告警"
+
+
+def test_percent_to_share_matches_create_loan_request():
+    """換算必須與 mytoncore.py CreateLoanRequest 的 int(pct/100*16777216) 一致。"""
+    from mytoncore.lst import percent_to_share
+
+    for percent in (0.17, 1.5, 10.0):
+        assert percent_to_share(percent) == int(percent / 100 * 16777216)

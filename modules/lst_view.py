@@ -15,10 +15,14 @@ from mypylib.mypylib import bcolors, color_print, print_table
 
 from mytoncore.lst import (
     CONTROLLER_STATES,
+    LOAN_SETTING_DEFAULTS,
     NANO,
+    check_controller_loan_readiness,
     check_controller_risks,
+    check_loan_settings,
     check_pool_risks,
     conversion_rate,
+    percent_to_share,
     share_to_percent,
 )
 
@@ -70,6 +74,12 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
     if local_pool and local_pool not in addresses:
         addresses[local_pool] = "本機"
 
+    # 節點端的借貸設定 —— 池子的 get method 看不到這些
+    settings = {
+        name: ton.local.db.get(name, default)
+        for name, default in LOAN_SETTING_DEFAULTS.items()
+    }
+
     now = int(time.time())
     elections_open = False
     try:
@@ -91,8 +101,13 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         entry["projected_halted"] = ton.GetPoolProjectedHalted(addr)
         loan_amount = None
         if entry["is_local"]:
-            # calculate_loan_amount 需要 pool 端的 update_round，只對本機池子試算
-            loan_amount = local.try_function(ton.calculate_loan_amount, args=[0, 10**6, (1 << 24) - 1])
+            # 用這台節點「實際會送出的參數」試算，才知道現在借不借得到。
+            # 用泛用參數試算只能知道池子有沒有錢，測不出設定不匹配。
+            loan_amount = local.try_function(
+                ton.calculate_loan_amount,
+                args=[settings["min_loan"], settings["max_loan"],
+                      percent_to_share(float(settings["max_interest_percent"]))],
+            )
         entry["loan_amount"] = loan_amount
         entry["risks"] = check_pool_risks(
             data,
@@ -114,15 +129,44 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         item["balance"] = getattr(account, "balance", None)
         item["status"] = getattr(account, "status", None)
         item["data"] = local.try_function(ton.GetControllerData, args=[addr])
+        # controller.func:667 —— 借這筆錢需要 controller 自己有多少資金
+        required = local.try_function(
+            ton.GetControllerRequiredBalanceForLoan,
+            args=[addr, settings["max_loan"],
+                  percent_to_share(float(settings["max_interest_percent"]))],
+        )
+        if isinstance(required, tuple) and len(required) == 2:
+            item["required_for_loan"] = required[0] / NANO
+            item["validator_amount"] = required[1] / NANO
         controllers.append(item)
+
+    min_stake = None
+    config17 = local.try_function(ton.get_config_17)
+    if config17 is not None:
+        min_stake = getattr(config17, "min_stake", None)
+
+    local_entry = next((p for p in pools if p["is_local"] and "data" in p), None)
+    loan_risks: list[tuple[str, str, str]] = []
+    if local_entry is not None:
+        loan_risks = check_loan_settings(
+            settings,
+            local_entry["data"],
+            loan_amount=local_entry.get("loan_amount"),
+            min_stake=min_stake,
+            elections_open=elections_open,
+        )
 
     return {
         "timestamp": now,
         "local_pool": local_pool,
         "elections_open": elections_open,
+        "settings": settings,
+        "min_stake": min_stake,
         "pools": pools,
         "controllers": controllers,
-        "controller_risks": check_controller_risks(controllers),
+        "controller_risks": check_controller_risks(controllers)
+        + check_controller_loan_readiness(controllers),
+        "loan_risks": loan_risks,
     }
 
 
@@ -203,6 +247,67 @@ def render(report: dict[str, Any]) -> None:
             ])
         print_table(ctable)
 
+    settings: dict[str, Any] = report.get("settings") or {}
+    local_pool_entry = next(
+        (p for p in report["pools"] if p["is_local"] and "data" in p), None
+    )
+    if settings and local_pool_entry is not None:
+        pool_data = local_pool_entry["data"]
+        print()
+        color_print("{cyan}===[ 借貸設定與可行性 ]==={endc}")
+        print(f"  本機池子：{local_pool_entry['name']}")
+        pool_rate = share_to_percent(pool_data.get("interest_rate")) or 0.0
+        stable: list[list[Any]] = [["項目", "節點設定", "池子限制", "說明"]]
+        stable.append([
+            "最低借款",
+            f"{settings['min_loan']:,} TON",
+            _ton(pool_data.get("min_loan_per_validator"), 0) + " TON",
+            "節點低於池子下限會被 clamp",
+        ])
+        stable.append([
+            "最高借款",
+            f"{settings['max_loan']:,} TON",
+            _ton(pool_data.get("max_loan_per_validator"), 0) + " TON",
+            "取兩者較小值",
+        ])
+        stable.append([
+            "可付利率上限",
+            f"{settings['max_interest_percent']}%",
+            f"{pool_rate:.4f}%（池子要價）",
+            "節點低於池子要價則借款被拒",
+        ])
+        print_table(stable)
+
+        loan_amount = local_pool_entry.get("loan_amount")
+        if loan_amount is None:
+            loan_text = "試算失敗"
+        elif loan_amount == -1:
+            loan_text = "池子拒絕放貸（-1）"
+        else:
+            loan_text = f"{loan_amount / NANO:,.0f} TON"
+        print(f"  依上述設定的本輪可貸額度：{loan_text}")
+        min_stake = report.get("min_stake")
+        if min_stake:
+            print(f"  網路最低質押（config17）：{min_stake:,.0f} TON")
+
+    controllers_loan = [
+        c for c in report["controllers"] if c.get("required_for_loan") is not None
+    ]
+    if controllers_loan:
+        print()
+        color_print("{cyan}===[ Controller 借款所需資金 ]==={endc}")
+        ltable: list[list[Any]] = [["Address", "自有資金", "借款所需", "差額"]]
+        for item in controllers_loan:
+            available = item["validator_amount"]
+            required = item["required_for_loan"]
+            ltable.append([
+                _short(item["addr"], 12),
+                f"{available:,.2f}",
+                f"{required:,.2f}",
+                f"{available - required:+,.2f}",
+            ])
+        print_table(ltable)
+
     print()
     color_print("{cyan}===[ 風險檢查 ]==={endc}")
     findings: list[tuple[str, str, str, str]] = []
@@ -212,6 +317,8 @@ def render(report: dict[str, Any]) -> None:
             continue
         for severity, key, message in pool["risks"]:
             findings.append((severity, pool["name"], key, message))
+    for severity, key, message in report.get("loan_risks", []):
+        findings.append((severity, "借貸設定", key, message))
     for severity, key, message in report["controller_risks"]:
         findings.append((severity, "controller", key, message))
 
