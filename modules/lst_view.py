@@ -8,6 +8,7 @@ color_print 做區塊標題、print_table 做表格、bcolors 做欄位著色。
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -15,12 +16,15 @@ from mypylib.mypylib import bcolors, color_print, print_table
 
 from mytoncore.lst import (
     CONTROLLER_STATES,
+    NODE_STATE_KEYS,
     LOAN_SETTING_DEFAULTS,
     NANO,
     check_controller_loan_readiness,
     check_controller_risks,
     check_loan_settings,
+    check_node_state,
     check_pool_risks,
+    controller_stake_readiness,
     conversion_rate,
     percent_to_share,
     share_to_percent,
@@ -80,6 +84,27 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         for name, default in LOAN_SETTING_DEFAULTS.items()
     }
 
+    db = ton.local.db
+    node_state: dict[str, Any] = {
+        "liquid_staking_enabled": bool(local.try_function(ton.using_liquid_staking)),
+        "only_node": db.get("onlyNode"),
+        "liquid_pool_addr": local_pool,
+        "pending_withdraws": db.get("controllerPendingWithdraws") or {},
+        "participate_before_end": db.get("participateBeforeEnd"),
+        "stake": db.get("stake"),
+    }
+    for key in NODE_STATE_KEYS:
+        node_state[key] = db.get(key) or []
+    # background_runner.py:219-224 —— db 讀取失敗時會從 <db_path>.backup 還原。
+    # 注意要用 ton.local（mytoncore 的 db）而不是 local（mytonctrl 自己的 db）
+    node_state["backup_age_sec"] = None
+    try:
+        node_state["backup_age_sec"] = time.time() - os.path.getmtime(
+            ton.local.db_path + ".backup"
+        )
+    except (OSError, AttributeError):
+        pass
+
     now = int(time.time())
     elections_open = False
     try:
@@ -98,6 +123,9 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
             continue
         entry["data"] = data
         entry["rate"] = conversion_rate(data)
+        # 合約用「帳戶餘額」而非 total_balance 判斷 halt 與流動性守門
+        pool_account = local.try_function(ton.GetAccount, args=[addr])
+        entry["pool_balance"] = getattr(pool_account, "balance", None)
         entry["projected_halted"] = ton.GetPoolProjectedHalted(addr)
         loan_amount = None
         if entry["is_local"]:
@@ -111,6 +139,7 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         entry["loan_amount"] = loan_amount
         entry["risks"] = check_pool_risks(
             data,
+            pool_balance=entry["pool_balance"],
             projected_halted=entry["projected_halted"],
             loan_amount=loan_amount,
             elections_open=elections_open,
@@ -123,8 +152,17 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         using = ton.local.db.get("using_controllers") or []
     except Exception:
         using = []
+    config15 = local.try_function(ton.get_config_15)
+    validators_elected_for = getattr(config15, "validators_elected_for", None)
+    stop_list = node_state.get("stop_controllers_list") or []
+
+    elector_addr = local.try_function(ton.GetFullElectorAddr)
     for addr in using:
-        item: dict[str, Any] = {"addr": addr}
+        item: dict[str, Any] = {"addr": addr, "now": now}
+        if elector_addr:
+            item["elector_returned_stake"] = local.try_function(
+                ton.get_returned_stake, args=[elector_addr, addr]
+            )
         account = local.try_function(ton.GetAccount, args=[addr])
         item["balance"] = getattr(account, "balance", None)
         item["status"] = getattr(account, "status", None)
@@ -138,6 +176,13 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         if isinstance(required, tuple) and len(required) == 2:
             item["required_for_loan"] = required[0] / NANO
             item["validator_amount"] = required[1] / NANO
+        ready, reason = controller_stake_readiness(
+            addr, item.get("data"), stop_list=stop_list,
+            validators_elected_for=validators_elected_for, now=now,
+        )
+        item["ready_to_stake"] = ready
+        item["ready_reason"] = reason
+        item["pending_withdraw"] = node_state["pending_withdraws"].get(addr)
         controllers.append(item)
 
     min_stake = None
@@ -161,6 +206,8 @@ def collect(ton: "MyTonCore", local: "MyPyClass") -> dict[str, Any]:
         "local_pool": local_pool,
         "elections_open": elections_open,
         "settings": settings,
+        "node_state": node_state,
+        "node_risks": check_node_state(node_state),
         "min_stake": min_stake,
         "pools": pools,
         "controllers": controllers,
@@ -175,12 +222,13 @@ def render(report: dict[str, Any]) -> None:
 
     color_print("{cyan}===[ LST 池子總覽 ]==={endc}")
     table: list[list[Any]] = [[
-        "Pool", "Address", "TVL (TON)", "Supply", "Rate", "Interest", "Gov fee", "Deposits", "Halted",
+        "Pool", "Address", "TVL (TON)", "Supply", "Rate", "Interest", "Gov fee",
+        "帳戶餘額", "待提款", "Deposits", "Halted",
     ]]
     for pool in pools:
         label = pool["name"] + (" ←本機" if pool["is_local"] else "")
         if "error" in pool:
-            table.append([label, _short(pool["address"]), "讀取失敗", "", "", "", "", "", ""])
+            table.append([label, _short(pool["address"]), "讀取失敗", "", "", "", "", "", "", "", ""])
             continue
         data = pool["data"]
         rate = pool.get("rate")
@@ -192,6 +240,8 @@ def render(report: dict[str, Any]) -> None:
             f"{rate:.6f}" if rate else "n/a",
             f"{share_to_percent(data.get('interest_rate')) or 0:.4f}%",
             f"{share_to_percent(data.get('governance_fee_share')) or 0:.4f}%",
+            f"{pool['pool_balance']:,.0f}" if isinstance(pool.get("pool_balance"), (int, float)) else "n/a",
+            _ton(data.get("requested_for_withdrawal"), 0),
             _bool(data.get("deposits_open"), "open", "closed"),
             _bool(not data.get("halted"), "no", "YES"),
         ])
@@ -286,6 +336,10 @@ def render(report: dict[str, Any]) -> None:
         else:
             loan_text = f"{loan_amount / NANO:,.0f} TON"
         print(f"  依上述設定的本輪可貸額度：{loan_text}")
+        print(
+            "  ※ calculate_loan_amount 的時間判斷方向與 recv_internal 相反"
+            "（pool.func:864 vs :396），credit_start_prior_elections_end 非 0 時不可盡信"
+        )
         min_stake = report.get("min_stake")
         if min_stake:
             print(f"  網路最低質押（config17）：{min_stake:,.0f} TON")
@@ -308,6 +362,41 @@ def render(report: dict[str, Any]) -> None:
             ])
         print_table(ltable)
 
+    node_state: dict[str, Any] = report.get("node_state") or {}
+    if node_state:
+        print()
+        color_print("{cyan}===[ 節點端狀態（mytoncore.db，鏈上查不到）]==={endc}")
+        ntable: list[list[Any]] = [["項目", "值"]]
+        ntable.append(["liquid-staking 模式", _bool(node_state.get("liquid_staking_enabled"), "啟用", "停用")])
+        ntable.append(["onlyNode", _bool(not node_state.get("only_node"), "否", "是（LST 停擺）")])
+        for key in NODE_STATE_KEYS:
+            values = node_state.get(key) or []
+            ntable.append([key, f"{len(values)} 個" if values else "（空）"])
+        pending = node_state.get("pending_withdraws") or {}
+        ntable.append(["controllerPendingWithdraws", f"{len(pending)} 筆" if pending else "（無）"])
+        ntable.append(["stake 設定", node_state.get("stake") if node_state.get("stake") is not None else "（未設定，LST 用 balance-50）"])
+        backup_age = node_state.get("backup_age_sec")
+        ntable.append([
+            "db backup 年齡",
+            f"{backup_age / 3600:.1f} 小時" if isinstance(backup_age, (int, float)) else "n/a",
+        ])
+        print_table(ntable)
+
+    ready_rows = [c for c in report["controllers"] if c.get("ready_reason")]
+    if ready_rows:
+        print()
+        color_print("{cyan}===[ Controller 參選就緒判定 ]==={endc}")
+        rtable: list[list[Any]] = [["Address", "可參選", "原因", "排隊提款"]]
+        for item in ready_rows:
+            pw = item.get("pending_withdraw")
+            rtable.append([
+                _short(item["addr"], 12),
+                "yes" if item.get("ready_to_stake") else "no",
+                item.get("ready_reason", ""),
+                f"{pw}" if pw is not None else "－",
+            ])
+        print_table(rtable)
+
     print()
     color_print("{cyan}===[ 風險檢查 ]==={endc}")
     findings: list[tuple[str, str, str, str]] = []
@@ -317,6 +406,8 @@ def render(report: dict[str, Any]) -> None:
             continue
         for severity, key, message in pool["risks"]:
             findings.append((severity, pool["name"], key, message))
+    for severity, key, message in report.get("node_risks", []):
+        findings.append((severity, "節點設定", key, message))
     for severity, key, message in report.get("loan_risks", []):
         findings.append((severity, "借貸設定", key, message))
     for severity, key, message in report["controller_risks"]:

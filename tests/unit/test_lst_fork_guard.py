@@ -340,3 +340,136 @@ def test_percent_to_share_matches_create_loan_request():
 
     for percent in (0.17, 1.5, 10.0):
         assert percent_to_share(percent) == int(percent / 100 * 16777216)
+
+
+# ── 合約失效模式 ──────────────────────────────────────────────────
+
+def _pool(**kw):
+    base = {
+        "halted": 0, "supply": 1000 * 10**9, "total_balance": 1000 * 10**9,
+        "interest_rate": 9561, "deposits_open": -1,
+        "optimistic_deposit_withdrawals": -1,
+        "requested_for_withdrawal": 0,
+        "projected_total_balance": 1000 * 10**9, "projected_pool_supply": 1000 * 10**9,
+        "current_round": {"active_borrowers": 2, "borrowed": 0},
+        "prev_round": {"active_borrowers": 0, "profit": 5 * 10**9},
+        "disbalance_tolerance": 255, "credit_start_prior_elections_end": 1,
+        "accrued_governance_fee": 1,
+    }
+    base.update(kw)
+    return base
+
+
+def test_pending_halt_is_self_computed():
+    """pool.func:678-688。帶 update_round 的 getter 透過 liteserver 回 error 7，
+    不能只靠比對兩個 getter，必須自算。"""
+    from mytoncore.lst import check_pool_risks
+
+    # 待提款 500 TON，池子餘額只有 100 TON → 回合結束會自動 halt
+    data = _pool(requested_for_withdrawal=500 * 10**9)
+    keys = [k for _s, k, _m in check_pool_risks(data, pool_balance=100.0)]
+    assert "pool_cannot_cover_withdrawals" in keys
+
+    # 餘額充足就不該告警
+    keys = [k for _s, k, _m in check_pool_risks(data, pool_balance=600.0)]
+    assert "pool_cannot_cover_withdrawals" not in keys
+
+
+def test_withdrawal_liquidity_gate():
+    """pool.func:254-257。觸發時交易 exit_code 是 0，鏈上完全看不出失敗。"""
+    from mytoncore.lst import check_pool_risks
+
+    # halt 門檻是 pending + 10（保留額），gate 門檻是 pending + 11（再加結算費）。
+    # 兩者只差 1 TON，所以要精準落在中間才測得到 gate 單獨觸發。
+    data = _pool(requested_for_withdrawal=100 * 10**9,
+                 current_round={"active_borrowers": 1, "borrowed": 0})
+    keys = [k for _s, k, _m in check_pool_risks(data, pool_balance=110.5)]
+    assert "withdrawal_gate_blocked" in keys
+    assert "pool_cannot_cover_withdrawals" not in keys, "halt 不該同時觸發"
+
+    # 再多 1 TON 就兩個都不觸發
+    keys = [k for _s, k, _m in check_pool_risks(data, pool_balance=112.0)]
+    assert "withdrawal_gate_blocked" not in keys
+
+
+def test_controller_stake_stuck_in_elector():
+    """controller.func:315 —— count 沒到 2 就永遠 recover 不了。"""
+    from mytoncore.lst import check_controller_risks
+
+    found = check_controller_risks([{
+        "addr": "Ef_stuck", "balance": 100.0, "now": 2_000_000_000,
+        "data": {"state": 3, "approved": -1, "validator_set_changes_count": 1,
+                 "validator_set_change_time": 1_999_990_000},
+    }])
+    assert "controller_stake_stuck" in [k for _s, k, _m in found]
+
+
+def test_controller_halted_while_staken():
+    """controller.func:295-297 —— halted 時 recover_stake 被封鎖。"""
+    from mytoncore.lst import check_controller_risks
+
+    found = check_controller_risks([{
+        "addr": "Ef_halted", "balance": 100.0,
+        "data": {"state": 3, "halted": -1, "approved": -1},
+    }])
+    assert "controller_halted_with_stake" in [k for _s, k, _m in found]
+
+
+def test_elector_pending_stake_is_flagged():
+    from mytoncore.lst import check_controller_risks
+
+    found = check_controller_risks([{
+        "addr": "Ef_pending", "balance": 100.0, "elector_returned_stake": 1234.5,
+        "data": {"state": 0, "approved": -1},
+    }])
+    assert "elector_stake_pending" in [k for _s, k, _m in found]
+
+
+def test_peculiarity_checks():
+    """docs/peculiarities.md 的幾條會實際踩到的坑。"""
+    from mytoncore.lst import check_pool_risks
+
+    # #1 匯率偏離 1 過遠
+    keys = [k for _s, k, _m in check_pool_risks(
+        _pool(total_balance=10**9, supply=10**14))]
+    assert "extreme_conversion_rate" in keys
+
+    # #9 interest_rate 為 0
+    keys = [k for _s, k, _m in check_pool_risks(_pool(interest_rate=0))]
+    assert "zero_interest_rate" in keys
+
+    # #2 回合利潤低於結算費
+    keys = [k for _s, k, _m in check_pool_risks(
+        _pool(prev_round={"active_borrowers": 0, "profit": 0}))]
+    assert "round_profit_below_fee" in keys
+
+    # pool_storage.func:220-225 舊格式降級指紋
+    keys = [k for _s, k, _m in check_pool_risks(
+        _pool(disbalance_tolerance=30, credit_start_prior_elections_end=0,
+              accrued_governance_fee=0))]
+    assert "possible_v1_fallback" in keys
+
+
+def test_sudoer_presence_is_flagged():
+    """docs/launching.md:34 —— sudoer 是繞過所有狀態機的後門，常態應為空。"""
+    from mytoncore.lst import check_pool_risks
+
+    keys = [k for _s, k, _m in check_pool_risks(_pool(sudoer="EQtest"))]
+    assert "sudoer_present" in keys
+    keys = [k for _s, k, _m in check_pool_risks(_pool(sudoer=None))]
+    assert "sudoer_present" not in keys
+
+
+def test_node_state_checks():
+    from mytoncore.lst import check_node_state
+
+    keys = [k for _s, k, _m in check_node_state({
+        "liquid_staking_enabled": True, "only_node": True,
+        "liquid_pool_addr": None, "using_controllers": [],
+    })]
+    assert "only_node_enabled" in keys        # LST 完全停擺
+    assert "pool_addr_missing" in keys
+    assert "no_using_controllers" in keys
+
+    keys = [k for _s, k, _m in check_node_state({"liquid_staking_enabled": False})]
+    assert keys == ["lst_mode_disabled"]
