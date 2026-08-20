@@ -194,6 +194,10 @@ class ControllerModule(MtcModule):
         t = self.do_calculate_loan_amount_test()
         print(t)
 
+    def lst_status(self, args):
+        from modules.lst_view import lst_status
+        lst_status(self.ton, self.local, args)
+
     def recover_stake(self, args):
         try:
             controller_addr = args[0]
@@ -217,3 +221,4 @@ class ControllerModule(MtcModule):
         add_command(self.local, console, "add_controller", self.add_controller)
         add_command(self.local, console, "test_calculate_loan_amount", self.calculate_loan_amount_test)
         add_command(self.local, console, "recover_stake", self.recover_stake)
+        add_command(self.local, console, "lst", self.lst_status)

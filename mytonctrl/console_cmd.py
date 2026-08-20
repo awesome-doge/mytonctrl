@@ -4,6 +4,8 @@ from mypyconsole.mypyconsole import MyPyConsole
 from mypylib import MyPyClass, color_print
 
 USAGES = {
+    "lst": "[--json]",
+    "recover_stake": "<controller-addr>",
     "update": "[repo_url|repo_owner] [branch]",
     "upgrade": "[repo_url|repo_owner] [branch]",
     "reload_global_config": "[url]",

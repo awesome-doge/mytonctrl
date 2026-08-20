@@ -14,6 +14,16 @@
 		"ru": "Переустановить глобальный конфиг сети",
 		"zh_TW": "重新下載網路全域設定檔"
 	},
+	"lst_cmd": {
+		"en": "Show liquid staking (KTON / pKTON) pool status and risk checks",
+		"ru": "Показать состояние пулов liquid staking (KTON / pKTON) и проверки рисков",
+		"zh_TW": "顯示 liquid staking（KTON / pKTON）池子狀態與風險檢查"
+	},
+	"recover_stake_cmd": {
+		"en": "Recover stake from a liquid staking controller",
+		"ru": "Вернуть стейк из контроллера liquid staking",
+		"zh_TW": "從 liquid staking controller 回收質押"
+	},
 	"status_cmd": {
 		"en": "Show TON status",
 		"ru": "Показать статус TON",

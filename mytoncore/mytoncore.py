@@ -36,6 +36,7 @@ from mytoncore.output import (
 	get_item_from_dict,
 	get_key_from_dict, get_var_from_worker_output,
 )
+from mytoncore.lst import parse_pool_full_data
 from mytoncore.clients import Fift, LiteClient, ValidatorConsole
 from mytoncore.models import (
     Config,
@@ -2538,6 +2539,29 @@ class MyTonCore:
 		for name in result_vars:
 			controllerData[name] = data.pop(0)
 		return controllerData
+
+	def GetPoolFullData(self, poolAddr: str) -> dict:
+		"""讀取 liquid staking 池的完整狀態。
+
+		用 get_pool_full_data_raw 而非 get_pool_full_data —— 後者內含 update_round()，
+		需要網路 config，實測透過 liteserver 會回 error 7。
+		欄位映射在 mytoncore/lst.py，來源是 KTON-IO/liquid-staking-contract。
+		"""
+		stack = self.run_get_method(poolAddr, "get_pool_full_data_raw")
+		return parse_pool_full_data(stack)
+
+	def GetPoolProjectedHalted(self, poolAddr: str):
+		"""帶 update_round 的版本是否會 halt。
+
+		與 raw 版的 halted 不一致，代表池子覆蓋不了待處理提款（pool.func:678-688）。
+		這個 getter 常因缺網路 config 而失敗，失敗時回 None（視為無法判斷）。
+		"""
+		try:
+			stack = self.run_get_method(poolAddr, "get_pool_full_data")
+			return bool(parse_pool_full_data(stack).get("halted"))
+		except Exception as ex:
+			self.local.add_log(f"GetPoolProjectedHalted: {ex}", "debug")
+			return None
 
 	def CreateLoanRequest(self, controllerAddr):
 		self.local.add_log("start CreateLoanRequest function", "debug")
