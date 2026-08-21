@@ -1005,7 +1005,7 @@ class MyTonCore:
 		if "participateBeforeEnd" in self.local.db:
 			now = time.time()
 			if (startWorkTime - now) > self.local.db["participateBeforeEnd"] and \
-			   (now + self.local.db["periods"]["elections"]) < startWorkTime:
+			   (now + (self.local.db.get("periods") or {}).get("elections", 0)) < startWorkTime:
 				return
 
 		vconfig = self.GetValidatorConfig()
@@ -2636,6 +2636,8 @@ class MyTonCore:
 		amount = controllerPendingWithdraws.get(controllerAddr)
 		self.WithdrawFromControllerProcess(controllerAddr, amount)
 		controllerPendingWithdraws.pop(controllerAddr)
+		# 少了 save()，mytoncore 重啟或 db 從 backup 還原後會重複送出同一筆提款
+		self.local.save()
 
 	def GetControllerPendingWithdraws(self):
 		bname = "controllerPendingWithdraws"
@@ -2659,11 +2661,18 @@ class MyTonCore:
 
 	def ControllersUpdateValidatorSet(self):
 		self.local.add_log("start ControllersUpdateValidatorSet function", "debug")
-		using_controllers = self.local.db.get("using_controllers")
+		using_controllers = self.local.db.get("using_controllers", list())
 		user_controllers = self.local.db.get("user_controllers", list())
 		old_controllers = self.local.db.get("old_controllers", list())
+		# 逐一隔離，比照 PoolsUpdateValidatorSet。少了這層，任何一個 controller
+		# 出錯都會中斷整個迴圈，連帶讓 run_elections 後面的 RecoverStake 與
+		# ElectionEntry 整輪跳過。
 		for controller in using_controllers + user_controllers + old_controllers:
-			self.ControllerUpdateValidatorSet(controller)
+			try:
+				self.ControllerUpdateValidatorSet(controller)
+			except Exception as e:
+				self.local.add_log(f"Error updating validator set for controller {controller}: {e}", "error")
+				continue
 
 	def ControllerUpdateValidatorSet(self, controllerAddr: str):
 		self.local.add_log("start ControllerUpdateValidatorSet function", "debug")
@@ -2672,7 +2681,8 @@ class MyTonCore:
 
 		try:
 			controllerData = self.GetControllerData(controllerAddr)
-		except Exception:
+		except Exception as e:
+			self.local.add_log(f"ControllerUpdateValidatorSet: failed to read {controllerAddr}: {e}", "error")
 			return
 
 		timeNow = int(time.time())
