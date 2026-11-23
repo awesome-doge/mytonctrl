@@ -27,6 +27,7 @@ COMMANDS = {
     "import_pool", "installer", "iw", "list_alerts", "list_custom_overlays", "mg", "mgtp", "nb",
     "new_pool", "new_single_pool", "nw", "od", "ol", "pools_list", "print_collation_config",
     "print_collation_whitelist", "print_collators", "print_local_collators",
+    "recover_stake",  # fork: awesome-doge/mytonctrl lst-v2-compatible
     "reload_global_config", "remove_btc_teleport", "reset_collators", "restore_backup", "set",
     "set_collation_config", "set_quic_port", "set_self_collate", "setup_alert_bot",
     "setup_collator", "status", "status_modes", "status_settings",
@@ -186,6 +187,7 @@ FORMS = [
     (f"stop_and_withdraw_controller {ADDR}", {"controller_addr": ADDR, "amount": None}),
     (f"stop_and_withdraw_controller {ADDR} 50", {"controller_addr": ADDR, "amount": 50.0}),
     (f"add_controller {ADDR}", {"controller_addr": ADDR}),
+    (f"recover_stake {ADDR}", {"controller_addr": ADDR}),  # fork: lst-v2-compatible
     ("test_calculate_loan_amount", {}),
     ("set_collation_config /tmp/config.json", {"location": "/tmp/config.json"}),
     ("set_collation_config https://example.com/config.json", {"location": "https://example.com/config.json"}),

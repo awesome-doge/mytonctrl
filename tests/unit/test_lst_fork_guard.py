@@ -82,12 +82,23 @@ def test_recover_stake_command_exists():
     )
 
 
-def test_stake_branches_are_exclusive():
-    """stake 計算的三個分支必須互斥（elif），不是連續的 if。"""
-    src = inspect.getsource(MyTonCore)
-    if "useController" not in src:
-        pytest.skip("找不到 stake 計算區塊，上游可能已重構")
-    assert "elif stake is None and useController" in src
+def test_controller_stake_is_balance_minus_50(ton: MyTonCore, monkeypatch):
+    """liquid-staking 模式下,stake 必須是 controller 餘額 − 50,不可再落進百分比分支。
+
+    舊版用 if/elif 保證互斥(fork 提交 9c0adcd);上游 v2.20.0 改成每個分支都先檢查
+    `stake is None` 的等效寫法。這裡改測行為本身,不綁定寫法。
+    """
+    from types import SimpleNamespace
+    monkeypatch.setattr(ton.local, "db", {**ton.local.db, "stake": None, "stakePercent": 100})
+    monkeypatch.setattr(ton, "using_pool", lambda: False)
+    monkeypatch.setattr(ton, "using_liquid_staking", lambda: True)
+    monkeypatch.setattr(ton, "GetValidatorConfig", lambda: SimpleNamespace(validators=[]))
+    monkeypatch.setattr(ton, "get_config_17", lambda: SimpleNamespace(
+        min_stake=300_000, max_stake=10_000_000, max_stake_factor=196608))
+    monkeypatch.setattr(ton, "is_account_single_nominator", lambda a: False)
+    monkeypatch.setattr(ton, "GetVersionFromCodeHash", lambda h: None)  # controller code
+    account = SimpleNamespace(balance=2_051_601.5, codeHash="00" * 32, addrB64="Ef_ctrl")
+    assert ton.GetStake(account) == 2_051_601.5 - 50
 
 
 # ── 四個防禦性修正 ────────────────────────────────────────────────
