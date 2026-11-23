@@ -2612,7 +2612,7 @@ class MyTonCore:
 		self.local.add_log("start CheckController function", "debug")
 		controllerData = self.GetControllerData(controllerAddr)
 		using_controllers = self.local.db.get("using_controllers", list())
-		if controllerData["approved"] != -1:
+		if controllerData["approved"] != -1:  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			raise Exception(f"CheckController error: controller not approved: {controllerAddr}")
 		if controllerAddr not in using_controllers:
 			raise Exception("CheckController error: controller is not up to date. Use new_controllers")
@@ -2650,7 +2650,7 @@ class MyTonCore:
 		now = get_timestamp()
 		config15 = self.get_config_15()
 		controllerData = self.GetControllerData(addrB64)
-		lastSentStakeTime = controllerData["stake_at"]
+		lastSentStakeTime = controllerData["stake_at"]  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 		stakeFreezeDelay = config15.validators_elected_for + config15.stake_held_for
 		result = lastSentStakeTime + stakeFreezeDelay < now
 		print(f"{addrB64}: {result}. {lastSentStakeTime}, {stakeFreezeDelay}, {now}")
@@ -2687,7 +2687,7 @@ class MyTonCore:
 
 		# Проверить наличие действующего кредита
 		controllerData = self.GetControllerData(controllerAddr)
-		if controllerData["borrowed_amount"] > 0:
+		if controllerData["borrowed_amount"] > 0:  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.local.add_log("CreateLoanRequest warning: past loan found", "warning")
 			return
 
@@ -2739,7 +2739,7 @@ class MyTonCore:
 		for i in range(10):
 			time.sleep(3)
 			controllerData = self.GetControllerData(controllerAddr)
-			if controllerData["borrowed_amount"] != 0:
+			if controllerData["borrowed_amount"] != 0:  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 				return
 		raise Exception("WaitLoan error: time out")
 
@@ -2752,7 +2752,7 @@ class MyTonCore:
 
 	def WithdrawFromController(self, controllerAddr: str, amount: float | None = None):
 		controllerData = self.GetControllerData(controllerAddr)
-		if controllerData["state"] == 0:
+		if controllerData["state"] == 0:  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.WithdrawFromControllerProcess(controllerAddr, amount)
 		else:
 			self.PendWithdrawFromController(controllerAddr, amount)
@@ -2837,22 +2837,22 @@ class MyTonCore:
 		fullElectorAddr = self.GetFullElectorAddr()
 		returnedStake = self.get_returned_stake(fullElectorAddr, controllerAddr)
 		controllerPendingWithdraws = self.GetControllerPendingWithdraws()
-		if (controllerData["state"] == 3 and
-			controllerData["validator_set_changes_count"] < 2 and
-			controllerData["validator_set_change_time"] < config34.start_work_time):
+		if (controllerData["state"] == 3 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			controllerData["validator_set_changes_count"] < 2 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			controllerData["validator_set_change_time"] < config34.start_work_time):  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.ControllerUpdateValidatorSetProcess(controllerAddr, wallet)
 			controllerData = self.GetControllerData(controllerAddr)
 		if (returnedStake > 0 and
-			controllerData["state"] == 3 and
-			controllerData["validator_set_changes_count"] >= 2 and
-			timeNow - controllerData["validator_set_change_time"] > controllerData["stake_held_for"] + 60):
+			controllerData["state"] == 3 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			controllerData["validator_set_changes_count"] >= 2 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			timeNow - controllerData["validator_set_change_time"] > controllerData["stake_held_for"] + 60):  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.ControllerRecoverStake(controllerAddr)
 			controllerData = self.GetControllerData(controllerAddr)
-		if (controllerData["state"] == 0 and
-			controllerData["borrowed_amount"] > 0 and
-			config34.start_work_time > controllerData["borrowing_time"]):
+		if (controllerData["state"] == 0 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			controllerData["borrowed_amount"] > 0 and  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
+			config34.start_work_time > controllerData["borrowing_time"]):  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.ReturnUnusedLoan(controllerAddr)
-		if (controllerData["state"] == 0 and controllerAddr in controllerPendingWithdraws):
+		if (controllerData["state"] == 0 and controllerAddr in controllerPendingWithdraws):  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 			self.HandleControllerPendingWithdraw(controllerPendingWithdraws, controllerAddr)
 		if controllerAddr not in controllers:
 			self.WithdrawFromController(controllerAddr)
