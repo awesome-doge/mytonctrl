@@ -2775,6 +2775,7 @@ class MyTonCore:
 
 	def WaitLoan(self, controllerAddr):
 		self.local.add_log("start WaitLoan function", "debug")
+		controllerData = None
 		for i in range(10):
 			time.sleep(3)
 			controllerData = self.GetControllerData(controllerAddr)

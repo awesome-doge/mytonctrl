@@ -230,3 +230,15 @@ def test_real_fift_the_new_body_is_the_legacy_body_plus_one_uint24(tmp_path):
     assert new[12:-3] == legacy[12:] and new[-3:] == b"\xff\xff\xff"  # same after the 64-bit query id, then the share
     with get_package_resource_path("mytoncore", NEW_SCRIPT) as new_script:  # a wrong argument count or an oversized share must fail loudly
         assert subprocess.run([FIFT, "-I", FIFT_LIB, "-s", str(new_script), "1", "2", "3", "16777216", str(tmp_path / "x.boc")], capture_output=True).returncode != 0
+
+
+def test_wait_loan_timeout_names_the_controller_state_and_share(ton: MyTonCore, monkeypatch):
+    """A rejected request must not surface as a bare "time out"."""
+    monkeypatch.setattr("mytoncore.mytoncore.time.sleep", lambda s: None)
+    monkeypatch.setattr(ton, "GetControllerData", lambda addr: {**V2, "approver_set_profit_share": 16609443})
+    ton.local.db.pop("accept_profit_share", None)
+    with pytest.raises(Exception) as err:
+        ton.WaitLoan(CONTROLLER)
+    text = str(err.value)
+    assert text.startswith("WaitLoan error: time out")
+    assert "controller state 0" in text and "approver_set_profit_share 16609443" in text and "setting False" in text
