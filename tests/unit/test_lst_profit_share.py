@@ -33,9 +33,10 @@ class _Wallet:
     name = "wallet_001"
 
 
-def _run(ton: MyTonCore, monkeypatch, controller_data, fift=None):
+def _run(ton: MyTonCore, monkeypatch, controller_data, fift=None, signed=None):
     """CreateLoanRequest with the node stubbed out; returns (fift calls, signed paths, log lines)."""
-    calls, signed, logs = [], [], []
+    calls, logs = [], []
+    signed = [] if signed is None else signed
     ton.local.db["min_loan"] = 940000
     ton.local.db["max_loan"] = 2362965
     ton.local.db["max_interest_percent"] = 0.17
@@ -104,6 +105,27 @@ def test_share_set_setting_off_still_sends_the_field_and_says_so(ton: MyTonCore,
     assert any("has profit share 16609443/16777216" in text and "0xfa06" in text for text in warnings)
 
 
+@pytest.mark.parametrize("share", ["16609443", -1, 16609443.0])
+def test_an_unexpected_share_value_still_sends_the_field(ton: MyTonCore, monkeypatch, share):
+    """Only a plain 0 means "no share": a v2 controller accepts the field in every case, so when in doubt it is sent."""
+    ton.local.db.pop("accept_profit_share", None)
+    calls, _, _ = _run(ton, monkeypatch, {**V2, "approver_set_profit_share": share})
+    assert len(calls) == 1 and _is_new(calls[0])
+
+
+def test_a_file_that_cannot_be_removed_does_not_stop_the_request(ton: MyTonCore, monkeypatch):
+    ton.local.db["accept_profit_share"] = True
+    monkeypatch.setattr("mytoncore.mytoncore.os.path.isfile", lambda p: True)
+
+    def denied(p):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("mytoncore.mytoncore.os.remove", denied)
+    calls, signed, logs = _run(ton, monkeypatch, V2)
+    assert len(calls) == 1 and _is_new(calls[0]) and len(signed) == 1
+    assert any("could not remove" in text for level, text in logs if level == "warning")
+
+
 @pytest.mark.parametrize("setting", [False, True])
 def test_v1_controller_always_gets_the_legacy_request(ton: MyTonCore, monkeypatch, setting):
     """A v1 controller ends parsing after max_interest: the extra field would be rejected."""
@@ -129,10 +151,11 @@ def test_nothing_is_signed_when_the_script_fails(ton: MyTonCore, monkeypatch):
         raise Exception("fift failed")
 
     signed = []
-    monkeypatch.setattr(ton, "SignBocWithWallet", lambda *a, **kw: signed.append(a))
     with pytest.raises(Exception, match="fift failed"):
-        _run(ton, monkeypatch, V2, fift=boom)
+        _run(ton, monkeypatch, V2, fift=boom, signed=signed)
     assert signed == []
+    _run(ton, monkeypatch, V2, signed=signed)  # the same list does fill up when the script works
+    assert len(signed) == 1
 
 
 # ---- the setting itself ---------------------------------------------------------------------------

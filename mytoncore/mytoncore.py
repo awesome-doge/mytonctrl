@@ -2723,7 +2723,7 @@ class MyTonCore:
 		# always gets the legacy request — it would reject the extra field.
 		approver_share = controllerData.get("approver_set_profit_share") if controllerData else None
 		is_v2 = approver_share is not None
-		share_set = isinstance(approver_share, int) and approver_share > 0
+		share_set = is_v2 and approver_share != 0  # anything but a plain 0 counts: a v2 controller accepts the field in every case
 		setting_on = self.loan_request_accepts_profit_share()
 		if share_set and not setting_on:
 			self.local.add_log(
@@ -2734,8 +2734,11 @@ class MyTonCore:
 			# The largest value is sent, so no percent has to round the same way on both sides,
 			# and a share set between this read and the message landing is still accepted.
 			# It means: whatever share the approver sets, this validator accepts.
-			if os.path.isfile(resultFilePath):
-				os.remove(resultFilePath)  # never sign a body left over from an earlier run
+			try:
+				if os.path.isfile(resultFilePath):
+					os.remove(resultFilePath)  # never sign a body left over from an earlier run
+			except OSError as e:  # the script overwrites the file anyway; do not lose the election over this
+				self.local.add_log(f"CreateLoanRequest: could not remove {resultFilePath}: {e}", "warning")
 			with get_package_resource_path('mytoncore', 'contracts/liquid-staking/generate-loan-request-profit-share.fif') as fiftScript:
 				args = [fiftScript, min_loan, max_loan, max_interest, self.LOAN_ACCEPTABLE_PROFIT_SHARE, resultFilePath]
 				self.fift.run(args)
