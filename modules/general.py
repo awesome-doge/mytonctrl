@@ -686,6 +686,15 @@ class GeneralModule(MtcModule):
                     f"{{red}} Error: mode {setting.mode} is disabled.{{endc}} Use flag --force to set it anyway"
                 )
                 return
+        if name == "accept_profit_share":
+            # fork (LSP v2): a string such as "True" or "on" would be stored as text, shown as
+            # True in the settings table, and read as off — refuse anything but true / false,
+            # with or without --force.
+            normalized = value.strip().lower()
+            if normalized not in ("true", "false"):
+                color_print("{red} Error: accept_profit_share must be true or false{endc}")
+                return
+            value = normalized
         self.ton.SetSettings(name, value)
         color_print("SetSettings - {green}OK{endc}")
 

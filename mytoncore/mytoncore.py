@@ -2715,10 +2715,27 @@ class MyTonCore:
 
 		wallet = self.GetValidatorWallet()
 		resultFilePath = self.tempDir + self.nodeName + wallet.name + "_loan_request.boc"
-		if self.loan_request_accepts_profit_share():
-			# fork (LSP v2): a controller whose approver set a profit share rejects a request
-			# without acceptable_profit_share (0xfa06), and the node only sees "WaitLoan time out".
-			# The largest value is sent, so no percent has to round the same way on both sides.
+		# fork (LSP v2): a controller whose approver set a profit share rejects a request
+		# without acceptable_profit_share (0xfa06), and the node only sees "WaitLoan time out".
+		# So the field is sent whenever the controller has a share, whatever the setting says:
+		# a request without it could not succeed anyway. The setting only adds the field ahead
+		# of time, while the share is still 0. A v1 controller (no such field in its getter)
+		# always gets the legacy request — it would reject the extra field.
+		approver_share = controllerData.get("approver_set_profit_share") if controllerData else None
+		is_v2 = approver_share is not None
+		share_set = isinstance(approver_share, int) and approver_share > 0
+		setting_on = self.loan_request_accepts_profit_share()
+		if share_set and not setting_on:
+			self.local.add_log(
+				f"CreateLoanRequest: controller {controllerAddr} has profit share {approver_share}/16777216 "
+				"but accept_profit_share is off; sending acceptable_profit_share anyway "
+				"(a request without it is rejected with 0xfa06)", "warning")
+		if is_v2 and (setting_on or share_set):
+			# The largest value is sent, so no percent has to round the same way on both sides,
+			# and a share set between this read and the message landing is still accepted.
+			# It means: whatever share the approver sets, this validator accepts.
+			if os.path.isfile(resultFilePath):
+				os.remove(resultFilePath)  # never sign a body left over from an earlier run
 			with get_package_resource_path('mytoncore', 'contracts/liquid-staking/generate-loan-request-profit-share.fif') as fiftScript:
 				args = [fiftScript, min_loan, max_loan, max_interest, self.LOAN_ACCEPTABLE_PROFIT_SHARE, resultFilePath]
 				self.fift.run(args)
@@ -2763,7 +2780,10 @@ class MyTonCore:
 			controllerData = self.GetControllerData(controllerAddr)
 			if controllerData["borrowed_amount"] != 0:  # pyright: ignore[reportOptionalSubscript]  # fork: GetControllerData returns None if the getter fails
 				return
-		raise Exception("WaitLoan error: time out")
+		# fork: say what the controller looked like, so a rejected request is not just "time out"
+		state = controllerData.get("state") if controllerData else None
+		share = controllerData.get("approver_set_profit_share") if controllerData else None
+		raise Exception(f"WaitLoan error: time out (controller state {state}, approver_set_profit_share {share}, accept_profit_share setting {self.local.db.get('accept_profit_share', False)!r})")
 
 	def ReturnUnusedLoan(self, controllerAddr):
 		self.local.add_log("start ReturnUnusedLoan function", "debug")
