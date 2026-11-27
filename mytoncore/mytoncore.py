@@ -2678,6 +2678,19 @@ class MyTonCore:
 			controllerData[name] = data.pop(0)
 		return controllerData
 
+	# fork (LSP v2): what a loan request carries as acceptable_profit_share when the
+	# `accept_profit_share` setting is on — the top of the uint24 share scale (2^24 - 1).
+	LOAN_ACCEPTABLE_PROFIT_SHARE = 16777215
+
+	def loan_request_accepts_profit_share(self) -> bool:
+		"""True only for an explicit boolean true (or 1); anything else keeps the legacy request."""
+		value = self.local.db.get("accept_profit_share", False)
+		if value is True or (isinstance(value, int) and not isinstance(value, bool) and value == 1):
+			return True
+		if value not in (False, None, 0):
+			self.local.add_log(f"accept_profit_share has an unexpected value {value!r}; sending the legacy loan request", "warning")
+		return False
+
 	def CreateLoanRequest(self, controllerAddr):
 		self.local.add_log("start CreateLoanRequest function", "debug")
 		min_loan = self.local.db.get("min_loan", 41000)
@@ -2701,10 +2714,19 @@ class MyTonCore:
 			self.local.add_log("CreateLoanRequest warning: Validator stake is too low. Use deposit_to_controller", "warning")
 
 		wallet = self.GetValidatorWallet()
-		fiftScript = self.contractsDir + "jetton_pool/fift-scripts/generate-loan-request.fif"
 		resultFilePath = self.tempDir + self.nodeName + wallet.name + "_loan_request.boc"
-		args = [fiftScript, min_loan, max_loan, max_interest, resultFilePath]
-		self.fift.run(args)
+		if self.loan_request_accepts_profit_share():
+			# fork (LSP v2): a controller whose approver set a profit share rejects a request
+			# without acceptable_profit_share (0xfa06), and the node only sees "WaitLoan time out".
+			# The largest value is sent, so no percent has to round the same way on both sides.
+			with get_package_resource_path('mytoncore', 'contracts/liquid-staking/generate-loan-request-profit-share.fif') as fiftScript:
+				args = [fiftScript, min_loan, max_loan, max_interest, self.LOAN_ACCEPTABLE_PROFIT_SHARE, resultFilePath]
+				self.fift.run(args)
+		else:
+			# setting off (the default): exactly the request this node has always sent
+			fiftScript = self.contractsDir + "jetton_pool/fift-scripts/generate-loan-request.fif"
+			args = [fiftScript, min_loan, max_loan, max_interest, resultFilePath]
+			self.fift.run(args)
 		resultFilePath = self.SignBocWithWallet(wallet, resultFilePath, controllerAddr, 1.01)
 		self.SendFile(resultFilePath, wallet)
 		self.WaitLoan(controllerAddr)

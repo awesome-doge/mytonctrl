@@ -49,6 +49,7 @@ SETTINGS = {
     'min_loan': Setting('liquid-staking', 41000, 'Min loan amount'),
     'max_loan': Setting('liquid-staking', 43000, 'Max loan amount'),
     'max_interest_percent': Setting('liquid-staking', 1.5, 'Max interest percent'),
+    'accept_profit_share': Setting('liquid-staking', False, 'Send acceptable_profit_share in loan requests (LSP v2 controllers with a profit share). true/false'),
     'duplicateSendfile': Setting(None, True, 'Duplicate external to public Liteservers'),
     'sendTelemetry': Setting(None, True, 'Send node telemetry'),
     'telemetryLiteUrl': Setting(None, 'https://telemetry.toncenter.com/report_status', 'Telemetry url'),

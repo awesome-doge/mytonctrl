@@ -1,0 +1,23 @@
+#!/usr/bin/fift -s
+"TonUtil.fif" include
+
+// fork (LSP v2): the same body as jetton_pool/fift-scripts/generate-loan-request.fif plus the
+// fourth field of controller::send_request_loan, acceptable_profit_share (uint24, share of 2^24).
+// A controller whose approver set a non-zero profit share rejects a request without it (0xfa06).
+{ ."usage: " @' $0 type ." min_loan max_loan max_interest acceptable_profit_share [<savefile>]" cr
+  ."Creates msg body for send_request_loan request to validator-controller " cr
+  ."min_loan and max_loan are in TON" cr
+  ."max_interest is the maximal interest, as a share of the loan per round, 16777216 based" cr
+  ."acceptable_profit_share is the largest profit share the validator accepts, 16777216 based (0..16777215)" cr 1 halt
+} : usage
+$# dup 4 < swap 5 > or ' usage if
+
+5 :$1..n
+$1 $>GR =: min_loan
+$2 $>GR =: max_loan
+$3 parse-int =: max_interest
+$4 parse-int =: acceptable_profit_share
+$5 "loan_request.boc" replace-if-null =: file-base
+
+<b 0x6335b11a 32 u, now 64 u, min_loan Gram, max_loan Gram, max_interest 24 u, acceptable_profit_share 24 u, b> 2 boc+>B
+file-base B>file

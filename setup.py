@@ -37,6 +37,7 @@ setup(
         "mytoncore": [
             "contracts/single-nominator-pool/*",
             "contracts/nominator-pool-v2/*",
+            "contracts/liquid-staking/*",
             "complaints/*",
         ],
         "mytonctrl": [
